@@ -74,7 +74,7 @@
     <div class="field"><label style="margin:0">表示する解の数</label><input type="number" id="maxSol" value="6" min="1" max="30"></div>
     <div class="note">
       使用手：U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, F, x（x2は不使用）。R/Rw/3Rw/4Rw/Lw/3Lw/Fはいずれも '（逆）・2（180°）も使用できます。<br>
-      探索は1方向あたり最大25万状態でメモリ保護のため打ち切ります。手数を大きくしすぎるとブラウザが重くなる場合があるため、10前後から試し、見つからない場合に少しずつ増やすことをおすすめします。
+      探索は1方向あたり最大120万状態でメモリ保護のため打ち切ります。手数を大きくしすぎるとブラウザが重くなる場合があるため、10前後から試し、見つからない場合に少しずつ増やすことをおすすめします。
     </div>
     <details>
       <summary>探索方式・持ち替えカウントの仕様について</summary>
@@ -234,8 +234,13 @@ function applyMoveFast(state, token){
   return out;
 }
 function hashState(state){
+  // 各要素は0-5の6値。6要素を6進数として1文字(0-46655)にまとめることで
+  // キー文字列の長さを120文字→20文字に圧縮し、Mapのメモリ使用量を大きく削減する。
   let s='';
-  for(let i=0;i<state.length;i++) s += String.fromCharCode(state[i]+32);
+  for(let i=0;i<120;i+=6){
+    const v = state[i] + state[i+1]*6 + state[i+2]*36 + state[i+3]*216 + state[i+4]*1296 + state[i+5]*7776;
+    s += String.fromCharCode(v);
+  }
   return s;
 }
 function isSolvedFast(state){
@@ -289,20 +294,33 @@ const MOVE_GROUP = {
 /* ============================================================
    3. 双方向探索 (meet-in-the-middle BFS)
    ============================================================ */
-const STATE_CAP = 250000; // 1方向あたりの状態数の上限（メモリ枯渇によるクラッシュ防止）
+const STATE_CAP = 1200000; // 1方向あたりの状態数の上限（メモリ枯渇によるクラッシュ防止）
 
 function yieldToUI(){ return new Promise(resolve => setTimeout(resolve, 0)); }
 
+// 各ノードの手順は「親ノードへのポインタ + 直前の1手」だけを持つ（配列を毎回複製しない）。
+// 実際に手順の配列が必要になるのは、双方向探索が合流した“解”を組み立てるときだけ。
+function reconstructPath(node){
+  const moves = [];
+  let cur = node;
+  while(cur.parent !== null){
+    moves.push(cur.move);
+    cur = cur.parent;
+  }
+  moves.reverse();
+  return moves;
+}
+
 async function bfsCollect(startState, maxD, maxRegripCap, deadline){
-  const table = new Map();
+  const table = new Map(); // hash -> {parent, move, lastGroup, lastHand, regrips} ※stateは持たない
   const h0 = hashState(startState);
-  const root = {state:startState, path:[], lastGroup:null, lastHand:null, regrips:0};
+  const root = {parent:null, move:null, lastGroup:null, lastHand:null, regrips:0};
   table.set(h0, root);
-  let frontier = [root];
+  let frontier = [{node:root, state:startState}]; // stateは現在の探索層にのみ一時保持（メモリ節約）
   let nodesSinceYield = 0;
   for(let d=1; d<=maxD; d++){
     const next = [];
-    for(const node of frontier){
+    for(const {node, state} of frontier){
       for(const token of BASE_MOVES){
         const grp = MOVE_GROUP[token];
         if(grp===node.lastGroup) continue;
@@ -312,16 +330,16 @@ async function bfsCollect(startState, maxD, maxRegripCap, deadline){
         const newRegrips = node.regrips+addRegrip;
         if(newRegrips>maxRegripCap) continue;
         const newHand = (fam==='R'||fam==='L') ? fam : node.lastHand;
-        const ns = applyMoveFast(node.state, token);
+        const ns = applyMoveFast(state, token);
         const h = hashState(ns);
         if(table.has(h)) continue;
-        const rec = {state:ns, path:[...node.path, token], lastGroup:grp, lastHand:newHand, regrips:newRegrips};
-        table.set(h, rec);
-        next.push(rec);
+        const childNode = {parent:node, move:token, lastGroup:grp, lastHand:newHand, regrips:newRegrips};
+        table.set(h, childNode);
+        next.push({node:childNode, state:ns});
         if(table.size > STATE_CAP) return {table, timedOut:true, capped:true};
       }
       nodesSinceYield++;
-      if(nodesSinceYield > 1500){ nodesSinceYield = 0; await yieldToUI(); }
+      if(nodesSinceYield > 3000){ nodesSinceYield = 0; await yieldToUI(); }
       if(Date.now() > deadline) return {table, timedOut:true};
     }
     frontier = next;
@@ -357,8 +375,8 @@ async function bidirectionalSearch(scrambled, maxDepth, maxRegrip, maxSol, timeB
   for(const [h, fnode] of fwdTable){
     if(bwdTable.has(h)){
       const bnode = bwdTable.get(h);
-      const suffix = bnode.path.slice().reverse().map(m=>INV[m]);
-      const full = [...fnode.path, ...suffix];
+      const suffix = reconstructPath(bnode).reverse().map(m=>INV[m]);
+      const full = [...reconstructPath(fnode), ...suffix];
       if(full.length===0 || full.length>maxDepth) continue;
       const key = full.join(' ');
       if(seen.has(key)) continue;
