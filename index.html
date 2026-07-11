@@ -69,17 +69,18 @@
 
   <div class="panel ctrlPanel">
     <h2>探索条件</h2>
-    <div class="field"><label style="margin:0">最大手数</label><input type="number" id="maxDepth" value="10" min="2" max="20"></div>
+    <div class="field"><label style="margin:0">最小手数から+何手まで探索</label><input type="number" id="extraDepth" value="4" min="0" max="8"></div>
     <div class="field"><label style="margin:0">最大持ち替え回数</label><input type="number" id="maxRegrip" value="4" min="0" max="10"></div>
     <div class="field"><label style="margin:0">表示する解の数</label><input type="number" id="maxSol" value="6" min="1" max="30"></div>
     <div class="note">
       使用手：U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, F, x（x2は不使用）。R/Rw/3Rw/4Rw/Lw/3Lw/Fはいずれも '（逆）・2（180°）も使用できます。<br>
-      探索は1方向あたり最大120万状態でメモリ保護のため打ち切ります。手数を大きくしすぎるとブラウザが重くなる場合があるため、10前後から試し、見つからない場合に少しずつ増やすことをおすすめします。
+      まず最短で解ける手数（最小手数）を自動的に見つけ、そこから指定した手数だけ深く探索して手順の候補を集めます。例えば最小手数が8手で「+4」なら、8〜12手の解を探します。<br>
+      探索は1方向あたり最大120万状態でメモリ保護のため打ち切ります。
     </div>
     <details>
       <summary>探索方式・持ち替えカウントの仕様について</summary>
       <div style="margin-top:6px;line-height:1.6;">
-        ・探索は双方向探索（開始状態からと完成状態から半分ずつ探索して真ん中で合流）を用いています。手数が大きくても比較的高速に探索できますが、最大手数を大きくするほど時間・メモリを多く使います。<br>
+        ・探索は双方向探索（開始状態からと完成状態から半分ずつ探索して真ん中で合流）を、手数を1手ずつ増やしながら行う反復深化方式です。まず解が存在する最小手数を見つけ、その後「+何手まで」で指定した深さまで追加で探索します。<br>
         ・持ち替え回数は「R系⇔L系の手の切り替え」および「xの実行」をそれぞれ1回とカウントする簡易的な近似です。U2・Fは持ち替えなしとみなします。実際の持ち方の感覚とは多少異なる場合があります。<br>
         ・崩れたラスト2エッジ以外のエッジは、手順の前後で完全に元の状態へ戻ることを条件に探索しています。
       </div>
@@ -384,6 +385,7 @@ async function bidirectionalSearch(scrambled, maxDepth, maxRegrip, maxSol, timeB
       if(regrips===null || regrips>maxRegrip) continue;
       seen.add(key);
       solutions.push({moves:full, regrips});
+      if(solutions.length >= maxSol*4) break; // 十分集まったら早期終了（速度優先）
     }
   }
   solutions.sort((a,b)=> a.moves.length-b.moves.length || a.regrips-b.regrips);
@@ -391,6 +393,38 @@ async function bidirectionalSearch(scrambled, maxDepth, maxRegrip, maxSol, timeB
     solutions: solutions.slice(0,maxSol),
     fwdSize: fwdTable.size, bwdSize: bwdTable.size,
     timedOut: fwd.timedOut || bwd.timedOut
+  };
+}
+
+// 最小手数を自動的に見つけたうえで、そこから指定した追加手数まで深く探索する。
+// 「最大手数」を直接指定するのではなく、「最短手順+何手まで許容するか」という指定方式。
+async function findMinDepthThenSearch(scrambled, maxRegrip, maxSol, extraDepth, timeBudgetMs, hardDepthCap){
+  const deadline = Date.now() + timeBudgetMs;
+  let minDepth = null;
+  let lastIncomplete = null;
+
+  for(let d=1; d<=hardDepthCap; d++){
+    const remaining = deadline - Date.now();
+    if(remaining <= 0){ return {solutions:[], minDepth:null, incomplete:true, triedUpTo:d-1}; }
+    const probe = await bidirectionalSearch(scrambled, d, maxRegrip, 1, remaining);
+    if(probe.solutions.length > 0){ minDepth = d; break; }
+    if(probe.timedOut){ lastIncomplete = d; break; } // これ以上深さを増やしても現実的な時間で終わらない
+  }
+
+  if(minDepth === null){
+    return {solutions:[], minDepth:null, incomplete: lastIncomplete !== null, triedUpTo: lastIncomplete || hardDepthCap};
+  }
+
+  const remaining = deadline - Date.now();
+  const targetDepth = minDepth + extraDepth;
+  const finalRes = await bidirectionalSearch(scrambled, targetDepth, maxRegrip, maxSol, Math.max(remaining, 1000));
+  return {
+    solutions: finalRes.solutions,
+    minDepth,
+    targetDepth,
+    fwdSize: finalRes.fwdSize, bwdSize: finalRes.bwdSize,
+    timedOut: finalRes.timedOut,
+    incomplete: false
   };
 }
 
@@ -457,7 +491,7 @@ function renderSolutions(result){
   const list=document.getElementById('solList');
   list.innerHTML='';
   if(result.solutions.length===0){
-    list.innerHTML='<div class="note">条件を満たす手順は見つかりませんでした。最大手数を増やすか、状態を見直してください。</div>';
+    list.innerHTML='<div class="note">条件を満たす手順は見つかりませんでした。持ち替え回数の上限を増やすか、状態を見直してください。</div>';
     return;
   }
   for(const sol of result.solutions){
@@ -470,13 +504,14 @@ function renderSolutions(result){
 }
 
 document.getElementById('btnSearch').addEventListener('click', async ()=>{
-  const maxDepth = Math.max(2, Math.min(20, parseInt(document.getElementById('maxDepth').value,10)||10));
+  const extraDepth = Math.max(0, Math.min(8, parseInt(document.getElementById('extraDepth').value,10)||4));
   const maxRegrip = Math.max(0, parseInt(document.getElementById('maxRegrip').value,10)||4);
   const maxSol = Math.max(1, parseInt(document.getElementById('maxSol').value,10)||6);
+  const HARD_DEPTH_CAP = 20;
 
   const btn=document.getElementById('btnSearch');
   btn.disabled=true;
-  setStatus('探索中です。最大手数が大きいと時間がかかることがあります…');
+  setStatus('最小手数を探索中です…');
   document.getElementById('solList').innerHTML='<div class="note">探索中…</div>';
 
   await yieldToUI(); // 「探索中」表示を確実に描画させてから重い処理に入る
@@ -491,18 +526,18 @@ document.getElementById('btnSearch').addEventListener('click', async ()=>{
     }
 
     const t0=performance.now();
-    const timeBudgetMs = 30000;
-    const result = await bidirectionalSearch(initState, maxDepth, maxRegrip, maxSol, timeBudgetMs);
+    const timeBudgetMs = 45000;
+    const result = await findMinDepthThenSearch(initState, maxRegrip, maxSol, extraDepth, timeBudgetMs, HARD_DEPTH_CAP);
     const t1=performance.now();
 
     renderSolutions(result);
 
     if(result.solutions.length>0){
-      setStatus(`解 ${result.solutions.length} 件を発見（${((t1-t0)/1000).toFixed(1)}秒 / 探索状態数: 前方${result.fwdSize.toLocaleString()}・後方${result.bwdSize.toLocaleString()}）`, 'ok');
-    } else if(result.timedOut){
-      setStatus('探索の状態数・時間の上限に達しましたが解が見つかりませんでした。最大手数を小さくするか、再度お試しください（大きくしすぎるとブラウザが不安定になることがあります）。', 'warn');
+      setStatus(`最小手数 ${result.minDepth}手 を発見。${result.minDepth}〜${result.targetDepth}手の範囲で解 ${result.solutions.length} 件（${((t1-t0)/1000).toFixed(1)}秒 / 探索状態数: 前方${result.fwdSize.toLocaleString()}・後方${result.bwdSize.toLocaleString()}）`, 'ok');
+    } else if(result.incomplete){
+      setStatus(`${result.triedUpTo}手まで試しましたが、状態数・時間の上限に達し探索を完了できませんでした。持ち替え回数の上限を増やすか、状態を見直してください。`, 'warn');
     } else {
-      setStatus(`最大手数(${maxDepth}手)・持ち替え回数(${maxRegrip}回)以内では解が見つかりませんでした。入力した色配置が物理的に到達不可能である可能性もあります。`, 'err');
+      setStatus(`最大${HARD_DEPTH_CAP}手まで試しましたが解が見つかりませんでした。持ち替え回数(${maxRegrip}回)以内では到達できないか、入力した色配置が物理的に到達不可能である可能性があります。`, 'err');
     }
   } catch(e){
     console.error(e);
