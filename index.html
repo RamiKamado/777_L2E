@@ -2,55 +2,72 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>7x7 ラスト2エッジ 手順探索ツール</title>
 <style>
   :root{ --gray:#b9bec4; --bg:#f4f5f7; --panel:#ffffff; --line:#d6d9de; --accent:#2f6fed; }
-  body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;background:var(--bg);margin:0;padding:24px;color:#20242b;}
-  h1{font-size:20px;margin:0 0 4px;}
-  .sub{color:#5b6270;font-size:13px;margin-bottom:18px;}
-  .layout{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;}
-  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;}
-  .netPanel{width:340px;}
-  .ctrlPanel{width:320px;}
-  .resultPanel{flex:1;min-width:360px;}
+  *{ box-sizing:border-box; }
+  body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;background:var(--bg);margin:0;padding:20px;color:#20242b;}
+  h1{font-size:19px;margin:0 0 4px;}
+  .sub{color:#5b6270;font-size:13px;margin-bottom:16px;}
+  .layout{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;width:100%;}
+  .netPanel{max-width:400px;}
+  .ctrlPanel{max-width:400px;}
+  .resultPanel{flex:1;min-width:280px;}
   h2{font-size:14px;margin:0 0 10px;color:#333;}
   .net{display:flex;flex-direction:column;align-items:center;gap:2px;margin:8px 0 4px;}
   .row{display:flex;gap:2px;}
-  .cell{width:34px;height:34px;border:1px solid #8b9099;border-radius:3px;box-sizing:border-box;cursor:pointer;}
+  .cell{width:15vw;height:15vw;max-width:38px;max-height:38px;min-width:26px;min-height:26px;border:1px solid #8b9099;border-radius:4px;box-sizing:border-box;cursor:pointer;touch-action:manipulation;}
   .cell.deco{background:var(--gray);cursor:default;border-color:#9aa0a8;}
   .cell.corner{visibility:hidden;}
-  .rowlabel{font-size:10px;color:#8a8f98;width:70px;text-align:right;margin-right:6px;align-self:center;}
+  .rowlabel{font-size:10px;color:#8a8f98;width:62px;flex:0 0 62px;text-align:right;margin-right:6px;align-self:center;}
   .rowwrap{display:flex;align-items:center;}
-  .spacer{height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#9aa0a8;}
-  .legend{font-size:11px;color:#6a6f78;margin-top:10px;line-height:1.6;}
-  .presetBtns{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;}
-  button{font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer;}
+  .spacer{height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#9aa0a8;text-align:center;padding:0 4px;}
+  .legend{font-size:11.5px;color:#6a6f78;margin-top:10px;line-height:1.6;}
+  .presetBtns{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+  button{font-size:13px;padding:9px 14px;border-radius:8px;border:1px solid var(--line);background:#fff;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
   button:hover{background:#f0f2f5;}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;font-size:15px;padding:13px 14px;}
   button.primary:hover{background:#255bd1;}
   button:disabled{opacity:.5;cursor:not-allowed;}
-  label{font-size:12px;display:block;margin:10px 0 4px;color:#444;}
-  input[type=number]{width:80px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;}
-  .field{display:flex;justify-content:space-between;align-items:center;}
-  .note{font-size:11px;color:#8a8f98;margin-top:4px;line-height:1.5;}
-  .status{font-size:13px;margin:10px 0;padding:8px 10px;border-radius:6px;background:#eef2fb;color:#2f4a8f;}
+  label{font-size:12.5px;display:block;margin:12px 0 5px;color:#444;}
+  input[type=number]{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:7px;font-size:16px;}
+  .field{display:flex;flex-direction:column;align-items:stretch;gap:5px;margin-bottom:6px;}
+  .field label{margin:0;}
+  .note{font-size:11.5px;color:#8a8f98;margin-top:6px;line-height:1.55;}
+  .status{font-size:13px;margin:10px 0;padding:10px 12px;border-radius:8px;background:#eef2fb;color:#2f4a8f;line-height:1.5;}
   .status.err{background:#fdecec;color:#a12626;}
   .status.ok{background:#eafaf0;color:#1f7a45;}
   .status.warn{background:#fff6e0;color:#8a6300;}
-  .solList{display:flex;flex-direction:column;gap:8px;max-height:560px;overflow:auto;}
-  .sol{border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px;}
-  .sol .moves{font-family:"SFMono-Regular",Consolas,monospace;font-size:14px;font-weight:600;letter-spacing:.3px;word-break:break-all;}
+  .solList{display:flex;flex-direction:column;gap:8px;max-height:520px;overflow:auto;-webkit-overflow-scrolling:touch;}
+  .sol{border:1px solid var(--line);border-radius:8px;padding:11px 12px;font-size:13px;}
+  .sol .moves{font-family:"SFMono-Regular",Consolas,monospace;font-size:14px;font-weight:600;letter-spacing:.3px;word-break:break-all;line-height:1.5;}
   .sol .meta{font-size:11px;color:#7a8090;margin-top:6px;}
-  .badge{display:inline-block;background:#eef1f5;border-radius:4px;padding:1px 6px;margin-right:6px;}
+  .badge{display:inline-block;background:#eef1f5;border-radius:4px;padding:2px 7px;margin-right:6px;margin-top:4px;}
   hr{border:none;border-top:1px solid var(--line);margin:14px 0;}
   details{margin-top:10px;font-size:12px;color:#555;}
-  details summary{cursor:pointer;color:var(--accent);}
+  details summary{cursor:pointer;color:var(--accent);padding:4px 0;}
+  .checkrow{display:flex;align-items:center;gap:8px;margin:14px 0 4px;cursor:pointer;padding:4px 0;}
+  .checkrow input[type=checkbox]{width:20px;height:20px;margin:0;flex:0 0 auto;}
+  .checkrow span{font-size:13px;color:#444;}
+
+  @media (max-width: 720px){
+    body{padding:12px;}
+    h1{font-size:17px;}
+    .layout{gap:12px;}
+    .panel{padding:14px;border-radius:10px;}
+    .netPanel, .ctrlPanel{max-width:none;}
+    .rowlabel{font-size:9px;width:50px;flex-basis:50px;}
+    .solList{max-height:none;overflow:visible;}
+    button.primary{width:100%;}
+  }
 </style>
 </head>
 <body>
 
 <h1>7x7 ラスト2エッジ 手順探索ツール</h1>
-<div class="sub">崩れた UF / UB の2エッジを、指定した手数・持ち替え回数の範囲で双方向探索します。</div>
+<div class="sub">崩れた UF / UB の2エッジを、指定した手数・持ち替え回数の範囲で探索します。</div>
 
 <div class="layout">
   <div class="panel netPanel">
@@ -60,7 +77,7 @@
       <button id="btnSolved">全て解決状態にリセット</button>
     </div>
     <div class="legend">
-      各セルをクリックすると色が切り替わります（白→青→緑）。<br>
+      各セルをタップすると色が切り替わります（白→青→緑）。<br>
       上2段＝UBエッジ（上：Bフラップ／下：U面）、下2段＝UFエッジ（上：U面／下：Fフラップ）。<br>
       中央のグレー部分は今回関係しないため省略しています。<br>
       <b>注意：</b>本ツールは色の組み合わせを自由に指定できますが、物理的に到達不可能な組み合わせ（実際のキューブでは起こり得ない色配置）を入力すると解が存在しないことがあります。UB側は本来「白・青」、UF側は本来「白・緑」のピースだけで構成されるのが現実的です。
@@ -73,9 +90,9 @@
     <div class="field"><label style="margin:0">最大持ち替え回数</label><input type="number" id="maxRegrip" value="4" min="0" max="10"></div>
     <div class="field"><label style="margin:0">表示する解の数</label><input type="number" id="maxSol" value="6" min="1" max="30"></div>
     <div class="field"><label style="margin:0">探索時間の上限（分）</label><input type="number" id="timeBudgetMin" value="30" min="1" max="120"></div>
-    <label style="display:flex;align-items:center;gap:6px;margin:10px 0 4px;cursor:pointer;">
-      <input type="checkbox" id="restrictUF" checked style="width:auto;margin:0;">
-      <span style="font-size:12px;color:#444;">U・FはU2・F2のみを使用する</span>
+    <label class="checkrow">
+      <input type="checkbox" id="restrictUF" checked>
+      <span>U・FはU2・F2のみを使用する</span>
     </label>
     <div class="note">
       使用手：U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, F, x（x2は不使用）。R/Rw/3Rw/4Rw/Lw/3Lw/Fはいずれも '（逆）・2（180°）も使用できます。<br>
