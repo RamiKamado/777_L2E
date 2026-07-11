@@ -73,14 +73,14 @@
     <div class="field"><label style="margin:0">最大持ち替え回数</label><input type="number" id="maxRegrip" value="4" min="0" max="10"></div>
     <div class="field"><label style="margin:0">表示する解の数</label><input type="number" id="maxSol" value="6" min="1" max="30"></div>
     <div class="note">
-      使用手：U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, x（x2は不使用）。<br>
+      使用手：U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, F, x（x2は不使用）。R/Rw/3Rw/4Rw/Lw/3Lw/Fはいずれも '（逆）・2（180°）も使用できます。<br>
       実在する7x7ラスト2エッジの手順は14〜19手程度になることが多いですが、双方向探索であっても手数が14を超えるとブラウザのメモリ上限に達し探索が完了しない場合があります。まずは12前後から試し、見つからない場合に少しずつ増やすことをおすすめします。
     </div>
     <details>
       <summary>探索方式・持ち替えカウントの仕様について</summary>
       <div style="margin-top:6px;line-height:1.6;">
         ・探索は双方向探索（開始状態からと完成状態から半分ずつ探索して真ん中で合流）を用いています。手数が大きくても比較的高速に探索できますが、最大手数を大きくするほど時間・メモリを多く使います。<br>
-        ・持ち替え回数は「R系⇔L系の手の切り替え」および「xの実行」をそれぞれ1回とカウントする簡易的な近似です。U2は持ち替えなしとみなします。実際の持ち方の感覚とは多少異なる場合があります。<br>
+        ・持ち替え回数は「R系⇔L系の手の切り替え」および「xの実行」をそれぞれ1回とカウントする簡易的な近似です。U2・Fは持ち替えなしとみなします。実際の持ち方の感覚とは多少異なる場合があります。<br>
         ・崩れたラスト2エッジ以外のエッジは、手順の前後で完全に元の状態へ戻ることを条件に探索しています。
       </div>
     </details>
@@ -125,15 +125,26 @@ function rotY180(pos){ const x=pos.x-3,z=pos.z-3; return {x:-x+3,y:pos.y,z:-z+3}
 const NORM_Y={R:[1,0],L:[-1,0],F:[0,1],B:[0,-1]};
 function relabelY180(face){ if(!(face in NORM_Y)) return face; const [dx,dz]=NORM_Y[face]; const ndx=-dx,ndz=-dz; for(const f in NORM_Y){if(NORM_Y[f][0]===ndx&&NORM_Y[f][1]===ndz)return f;} return face; }
 
-function buildTransform(xPredOrNull, dir, isY180){
+function rotZ(pos, dir){ const x=pos.x-3,y=pos.y-3; let nx,ny; if(dir===1){nx=y;ny=-x;}else{nx=-y;ny=x;} return {x:nx+3,y:ny+3,z:pos.z}; }
+const NORM_Z={U:[0,1],D:[0,-1],R:[1,0],L:[-1,0]};
+function relabelZ(face,dir){ if(!(face in NORM_Z)) return face; const [dx,dy]=NORM_Z[face]; let ndx,ndy; if(dir===1){ndx=dy;ndy=-dx;}else{ndx=-dy;ndy=dx;} for(const f in NORM_Z){if(NORM_Z[f][0]===ndx&&NORM_Z[f][1]===ndy)return f;} return face; }
+
+function buildTransform(kind, pred, dir){
   const transform = SLOTS.map((s,i)=>({src:i, flip:false}));
   for(let i=0;i<SLOTS.length;i++){
     const s = SLOTS[i];
-    const affected = isY180 ? (s.pos.y===6) : xPredOrNull(s.pos.x);
+    let affected, newPos, newFaces;
+    if(kind==='y180'){
+      affected = s.pos.y===6;
+      if(affected){ newPos = rotY180(s.pos); newFaces=[relabelY180(s.faces[0]), relabelY180(s.faces[1])]; }
+    } else if(kind==='x'){
+      affected = pred(s.pos.x);
+      if(affected){ newPos = rotX(s.pos, dir); newFaces=[relabelX(s.faces[0],dir), relabelX(s.faces[1],dir)]; }
+    } else if(kind==='z'){
+      affected = pred(s.pos.z);
+      if(affected){ newPos = rotZ(s.pos, dir); newFaces=[relabelZ(s.faces[0],dir), relabelZ(s.faces[1],dir)]; }
+    }
     if(!affected) continue;
-    let newPos, newFaces;
-    if(isY180){ newPos = rotY180(s.pos); newFaces=[relabelY180(s.faces[0]), relabelY180(s.faces[1])]; }
-    else { newPos = rotX(s.pos, dir); newFaces=[relabelX(s.faces[0],dir), relabelX(s.faces[1],dir)]; }
     const destIdx = SLOT_INDEX.get(posKey(newPos));
     const destFaces = SLOTS[destIdx].faces;
     let flip;
@@ -145,33 +156,72 @@ function buildTransform(xPredOrNull, dir, isY180){
   return transform;
 }
 
+// 同系統の手を2回連続で行うのは探索の「直前と同じ系統は禁止」ルールに引っかかるため、
+// 180°回転（例: R2, Rw2, F2 …）は「1手」として扱えるよう、変換テーブルを合成して作る。
+function buildDoubleTransform(baseTransform){
+  function apply(arr, tr){
+    const out = new Array(120);
+    for(let d=0; d<60; d++){
+      const {src, flip} = tr[d];
+      if(!flip){ out[d*2]=arr[src*2]; out[d*2+1]=arr[src*2+1]; }
+      else { out[d*2]=arr[src*2+1]; out[d*2+1]=arr[src*2]; }
+    }
+    return out;
+  }
+  let sym = new Array(120);
+  for(let i=0;i<120;i++) sym[i]=i;
+  sym = apply(sym, baseTransform);
+  sym = apply(sym, baseTransform);
+  const combined = [];
+  for(let d=0; d<60; d++){
+    const t0 = sym[d*2];
+    const src = Math.floor(t0/2);
+    const flip = (t0 % 2) === 1;
+    combined.push({src, flip});
+  }
+  return combined;
+}
+
 const MOVE_DEFS = {
-  'U2':  {isY180:true},
-  'x':   {xPred:v=>true, dir:1},
-  "x'":  {xPred:v=>true, dir:-1},
-  'R':   {xPred:v=>v===6, dir:1},
-  "R'":  {xPred:v=>v===6, dir:-1},
-  'Rw':  {xPred:v=>v>=5, dir:1},
-  "Rw'": {xPred:v=>v>=5, dir:-1},
-  '3Rw': {xPred:v=>v>=4, dir:1},
-  "3Rw'":{xPred:v=>v>=4, dir:-1},
-  '4Rw': {xPred:v=>v>=3, dir:1},
-  "4Rw'":{xPred:v=>v>=3, dir:-1},
-  'Lw':  {xPred:v=>v<=1, dir:-1},
-  "Lw'": {xPred:v=>v<=1, dir:1},
-  '3Lw': {xPred:v=>v<=2, dir:-1},
-  "3Lw'":{xPred:v=>v<=2, dir:1},
+  'U2':  {kind:'y180'},
+  'x':   {kind:'x', pred:v=>true, dir:1},
+  "x'":  {kind:'x', pred:v=>true, dir:-1},
+  'R':   {kind:'x', pred:v=>v===6, dir:1},
+  "R'":  {kind:'x', pred:v=>v===6, dir:-1},
+  'Rw':  {kind:'x', pred:v=>v>=5, dir:1},
+  "Rw'": {kind:'x', pred:v=>v>=5, dir:-1},
+  '3Rw': {kind:'x', pred:v=>v>=4, dir:1},
+  "3Rw'":{kind:'x', pred:v=>v>=4, dir:-1},
+  '4Rw': {kind:'x', pred:v=>v>=3, dir:1},
+  "4Rw'":{kind:'x', pred:v=>v>=3, dir:-1},
+  'Lw':  {kind:'x', pred:v=>v<=1, dir:-1},
+  "Lw'": {kind:'x', pred:v=>v<=1, dir:1},
+  '3Lw': {kind:'x', pred:v=>v<=2, dir:-1},
+  "3Lw'":{kind:'x', pred:v=>v<=2, dir:1},
+  'F':   {kind:'z', pred:v=>v===6, dir:1},
+  "F'":  {kind:'z', pred:v=>v===6, dir:-1},
 };
 const MOVE_TRANSFORM = {};
 for(const token in MOVE_DEFS){
   const d = MOVE_DEFS[token];
-  MOVE_TRANSFORM[token] = buildTransform(d.xPred, d.dir, !!d.isY180);
+  MOVE_TRANSFORM[token] = buildTransform(d.kind, d.pred, d.dir);
 }
-const BASE_MOVES = Object.keys(MOVE_TRANSFORM); // 15 tokens (no *2, no x2)
+// 180°回転トークンを合成して追加（1手としてカウントするため、家族連続禁止ルールの対象外にはせず
+// あくまで「1つの手」として単独で使えるようにする）
+const DOUBLE_SOURCES = ['R','Rw','3Rw','4Rw','Lw','3Lw','F'];
+for(const base of DOUBLE_SOURCES){
+  MOVE_TRANSFORM[base+'2'] = buildDoubleTransform(MOVE_TRANSFORM[base]);
+}
+
+const BASE_MOVES = Object.keys(MOVE_TRANSFORM);
 const INV = {R:"R'","R'":'R',Rw:"Rw'","Rw'":'Rw','3Rw':"3Rw'","3Rw'":'3Rw','4Rw':"4Rw'","4Rw'":'4Rw',
-             Lw:"Lw'","Lw'":'Lw','3Lw':"3Lw'","3Lw'":'3Lw',U2:'U2',x:"x'","x'":'x'};
-const MOVE_FAMILY = {U2:'U',R:'R',"R'":'R',Rw:'R',"Rw'":'R','3Rw':'R',"3Rw'":'R','4Rw':'R',"4Rw'":'R',
-                      Lw:'L',"Lw'":'L','3Lw':'L',"3Lw'":'L',x:'X',"x'":'X'};
+             Lw:"Lw'","Lw'":'Lw','3Lw':"3Lw'","3Lw'":'3Lw',U2:'U2',x:"x'","x'":'x',
+             F:"F'","F'":'F',
+             R2:'R2',Rw2:'Rw2','3Rw2':'3Rw2','4Rw2':'4Rw2',Lw2:'Lw2','3Lw2':'3Lw2',F2:'F2'};
+const MOVE_FAMILY = {U2:'U',R:'R',"R'":'R',R2:'R',Rw:'R',"Rw'":'R',Rw2:'R','3Rw':'R',"3Rw'":'R','3Rw2':'R',
+                      '4Rw':'R',"4Rw'":'R','4Rw2':'R',
+                      Lw:'L',"Lw'":'L',Lw2:'L','3Lw':'L',"3Lw'":'L','3Lw2':'L',
+                      x:'X',"x'":'X', F:'F',"F'":'F',F2:'F'};
 
 function applyMoveFast(state, token){
   const tr = MOVE_TRANSFORM[token];

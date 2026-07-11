@@ -15,7 +15,7 @@
 
 ## 使用手
 
-`U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, x`（x2は不使用）
+`U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, F, x`（x2は不使用、R/Rw/3Rw/4Rw/Lw/3Lw/Fは '・2 も使用可）
 
 ## 注意事項
 
