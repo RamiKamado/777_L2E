@@ -69,12 +69,12 @@
 
   <div class="panel ctrlPanel">
     <h2>探索条件</h2>
-    <div class="field"><label style="margin:0">最大手数</label><input type="number" id="maxDepth" value="12" min="2" max="20"></div>
+    <div class="field"><label style="margin:0">最大手数</label><input type="number" id="maxDepth" value="10" min="2" max="20"></div>
     <div class="field"><label style="margin:0">最大持ち替え回数</label><input type="number" id="maxRegrip" value="4" min="0" max="10"></div>
     <div class="field"><label style="margin:0">表示する解の数</label><input type="number" id="maxSol" value="6" min="1" max="30"></div>
     <div class="note">
       使用手：U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, F, x（x2は不使用）。R/Rw/3Rw/4Rw/Lw/3Lw/Fはいずれも '（逆）・2（180°）も使用できます。<br>
-      実在する7x7ラスト2エッジの手順は14〜19手程度になることが多いですが、双方向探索であっても手数が14を超えるとブラウザのメモリ上限に達し探索が完了しない場合があります。まずは12前後から試し、見つからない場合に少しずつ増やすことをおすすめします。
+      探索は1方向あたり最大25万状態でメモリ保護のため打ち切ります。手数を大きくしすぎるとブラウザが重くなる場合があるため、10前後から試し、見つからない場合に少しずつ増やすことをおすすめします。
     </div>
     <details>
       <summary>探索方式・持ち替えカウントの仕様について</summary>
@@ -289,12 +289,17 @@ const MOVE_GROUP = {
 /* ============================================================
    3. 双方向探索 (meet-in-the-middle BFS)
    ============================================================ */
-function bfsCollect(startState, maxD, maxRegripCap, deadline){
+const STATE_CAP = 250000; // 1方向あたりの状態数の上限（メモリ枯渇によるクラッシュ防止）
+
+function yieldToUI(){ return new Promise(resolve => setTimeout(resolve, 0)); }
+
+async function bfsCollect(startState, maxD, maxRegripCap, deadline){
   const table = new Map();
   const h0 = hashState(startState);
   const root = {state:startState, path:[], lastGroup:null, lastHand:null, regrips:0};
   table.set(h0, root);
   let frontier = [root];
+  let nodesSinceYield = 0;
   for(let d=1; d<=maxD; d++){
     const next = [];
     for(const node of frontier){
@@ -313,7 +318,10 @@ function bfsCollect(startState, maxD, maxRegripCap, deadline){
         const rec = {state:ns, path:[...node.path, token], lastGroup:grp, lastHand:newHand, regrips:newRegrips};
         table.set(h, rec);
         next.push(rec);
+        if(table.size > STATE_CAP) return {table, timedOut:true, capped:true};
       }
+      nodesSinceYield++;
+      if(nodesSinceYield > 1500){ nodesSinceYield = 0; await yieldToUI(); }
       if(Date.now() > deadline) return {table, timedOut:true};
     }
     frontier = next;
@@ -337,11 +345,11 @@ function replayMetrics(moves){
   return regrips;
 }
 
-function bidirectionalSearch(scrambled, maxDepth, maxRegrip, maxSol, timeBudgetMs){
+async function bidirectionalSearch(scrambled, maxDepth, maxRegrip, maxSol, timeBudgetMs){
   const deadline = Date.now() + timeBudgetMs;
   const F = Math.ceil(maxDepth/2), B = maxDepth - F;
-  const fwd = bfsCollect(scrambled, F, maxRegrip, deadline);
-  const bwd = bfsCollect(SOLVED, B, maxRegrip, deadline);
+  const fwd = await bfsCollect(scrambled, F, maxRegrip, deadline);
+  const bwd = await bfsCollect(SOLVED, B, maxRegrip, deadline);
   const fwdTable = fwd.table, bwdTable = bwd.table;
 
   const solutions = [];
@@ -443,47 +451,47 @@ function renderSolutions(result){
   }
 }
 
-document.getElementById('btnSearch').addEventListener('click', ()=>{
-  const maxDepth = Math.max(2, Math.min(22, parseInt(document.getElementById('maxDepth').value,10)||16));
+document.getElementById('btnSearch').addEventListener('click', async ()=>{
+  const maxDepth = Math.max(2, Math.min(20, parseInt(document.getElementById('maxDepth').value,10)||10));
   const maxRegrip = Math.max(0, parseInt(document.getElementById('maxRegrip').value,10)||4);
   const maxSol = Math.max(1, parseInt(document.getElementById('maxSol').value,10)||6);
 
   const btn=document.getElementById('btnSearch');
   btn.disabled=true;
-  setStatus('探索中です。最大手数が大きいと数十秒〜数分かかることがあります…');
+  setStatus('探索中です。最大手数が大きいと時間がかかることがあります…');
   document.getElementById('solList').innerHTML='<div class="note">探索中…</div>';
 
-  setTimeout(()=>{
-    try{
-      const {ub,uf} = readNetToColors();
-      const initState = buildScrambledState(ub, uf);
+  await yieldToUI(); // 「探索中」表示を確実に描画させてから重い処理に入る
 
-      if(isSolvedFast(initState)){
-        setStatus('現在の入力はすでに解決状態です。セルをクリックして崩れた状態を入力してください。', 'err');
-        btn.disabled=false; return;
-      }
+  try{
+    const {ub,uf} = readNetToColors();
+    const initState = buildScrambledState(ub, uf);
 
-      const t0=performance.now();
-      const timeBudgetMs = 60000;
-      const result = bidirectionalSearch(initState, maxDepth, maxRegrip, maxSol, timeBudgetMs);
-      const t1=performance.now();
-
-      renderSolutions(result);
-
-      if(result.solutions.length>0){
-        setStatus(`解 ${result.solutions.length} 件を発見（${((t1-t0)/1000).toFixed(1)}秒 / 探索状態数: 前方${result.fwdSize.toLocaleString()}・後方${result.bwdSize.toLocaleString()}）`, 'ok');
-      } else if(result.timedOut){
-        setStatus('探索が時間予算内に完了しませんでした。最大手数を小さくするか、再度お試しください。', 'warn');
-      } else {
-        setStatus(`最大手数(${maxDepth}手)・持ち替え回数(${maxRegrip}回)以内では解が見つかりませんでした。入力した色配置が物理的に到達不可能である可能性もあります。`, 'err');
-      }
-    } catch(e){
-      console.error(e);
-      setStatus('エラーが発生しました: '+e.message, 'err');
-    } finally {
-      btn.disabled=false;
+    if(isSolvedFast(initState)){
+      setStatus('現在の入力はすでに解決状態です。セルをクリックして崩れた状態を入力してください。', 'err');
+      btn.disabled=false; return;
     }
-  }, 30);
+
+    const t0=performance.now();
+    const timeBudgetMs = 30000;
+    const result = await bidirectionalSearch(initState, maxDepth, maxRegrip, maxSol, timeBudgetMs);
+    const t1=performance.now();
+
+    renderSolutions(result);
+
+    if(result.solutions.length>0){
+      setStatus(`解 ${result.solutions.length} 件を発見（${((t1-t0)/1000).toFixed(1)}秒 / 探索状態数: 前方${result.fwdSize.toLocaleString()}・後方${result.bwdSize.toLocaleString()}）`, 'ok');
+    } else if(result.timedOut){
+      setStatus('探索の状態数・時間の上限に達しましたが解が見つかりませんでした。最大手数を小さくするか、再度お試しください（大きくしすぎるとブラウザが不安定になることがあります）。', 'warn');
+    } else {
+      setStatus(`最大手数(${maxDepth}手)・持ち替え回数(${maxRegrip}回)以内では解が見つかりませんでした。入力した色配置が物理的に到達不可能である可能性もあります。`, 'err');
+    }
+  } catch(e){
+    console.error(e);
+    setStatus('エラーが発生しました: '+e.message, 'err');
+  } finally {
+    btn.disabled=false;
+  }
 });
 </script>
 </body>
