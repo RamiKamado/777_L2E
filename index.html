@@ -60,7 +60,7 @@
       <button id="btnSolved">全て解決状態にリセット</button>
     </div>
     <div class="legend">
-      各セルをクリックすると色が切り替わります（白→緑→赤→青→橙→黄）。<br>
+      各セルをクリックすると色が切り替わります（白→青→緑）。<br>
       上2段＝UBエッジ（上：Bフラップ／下：U面）、下2段＝UFエッジ（上：U面／下：Fフラップ）。<br>
       中央のグレー部分は今回関係しないため省略しています。<br>
       <b>注意：</b>本ツールは色の組み合わせを自由に指定できますが、物理的に到達不可能な組み合わせ（実際のキューブでは起こり得ない色配置）を入力すると解が存在しないことがあります。UB側は本来「白・青」、UF側は本来「白・緑」のピースだけで構成されるのが現実的です。
@@ -253,8 +253,8 @@ const SOLVED = genSolvedArray();
 /* ============================================================
    2. 崩れた状態の構築（UI入力 → 状態配列）
    ============================================================ */
-const PALETTE = ['#ffffff','#ffd500','#009e49','#0051ba','#c8102e','#ff8200'];
-const COLOR_IDX = {'#ffffff':0,'#ffd500':1,'#009e49':2,'#0051ba':3,'#c8102e':4,'#ff8200':5};
+const PALETTE = ['#ffffff','#0051ba','#009e49'];
+const COLOR_IDX = {'#ffffff':0,'#0051ba':3,'#009e49':2}; // FACE_COLORの内部表現(U=0,F=2,B=3)と一致させる
 
 const UB_SLOTS = [1,2,3,4,5].map(x => SLOT_INDEX.get(posKey({x,y:6,z:0})));
 const UF_SLOTS = [1,2,3,4,5].map(x => SLOT_INDEX.get(posKey({x,y:6,z:6})));
@@ -272,21 +272,36 @@ function buildScrambledState(ubColors, ufColors){
   return arr;
 }
 
+// MOVE_GROUP: 「同じ回転を連続で行うと1手にまとめられる」単位（幅ごとに区別する）。
+// 例えば Rw と R は幅が違う別グループなので連続してよい（Rw2 の後に R2 は有効な手順）。
+// MOVE_FAMILY は持ち替え判定専用（R系/L系/中立/回転）に使う、より粗い分類。
+const MOVE_GROUP = {
+  R:'R',"R'":'R',R2:'R',
+  Rw:'Rw',"Rw'":'Rw',Rw2:'Rw',
+  '3Rw':'3Rw',"3Rw'":'3Rw','3Rw2':'3Rw',
+  '4Rw':'4Rw',"4Rw'":'4Rw','4Rw2':'4Rw',
+  Lw:'Lw',"Lw'":'Lw',Lw2:'Lw',
+  '3Lw':'3Lw',"3Lw'":'3Lw','3Lw2':'3Lw',
+  F:'F',"F'":'F',F2:'F',
+  U2:'U2', x:'x', "x'":'x'
+};
+
 /* ============================================================
    3. 双方向探索 (meet-in-the-middle BFS)
    ============================================================ */
 function bfsCollect(startState, maxD, maxRegripCap, deadline){
   const table = new Map();
   const h0 = hashState(startState);
-  const root = {state:startState, path:[], lastFamily:null, lastHand:null, regrips:0};
+  const root = {state:startState, path:[], lastGroup:null, lastHand:null, regrips:0};
   table.set(h0, root);
   let frontier = [root];
   for(let d=1; d<=maxD; d++){
     const next = [];
     for(const node of frontier){
       for(const token of BASE_MOVES){
+        const grp = MOVE_GROUP[token];
+        if(grp===node.lastGroup) continue;
         const fam = MOVE_FAMILY[token];
-        if(fam===node.lastFamily) continue;
         let addRegrip=0;
         if(fam==='X') addRegrip=1; else if((fam==='R'||fam==='L') && node.lastHand && fam!==node.lastHand) addRegrip=1;
         const newRegrips = node.regrips+addRegrip;
@@ -295,7 +310,7 @@ function bfsCollect(startState, maxD, maxRegripCap, deadline){
         const ns = applyMoveFast(node.state, token);
         const h = hashState(ns);
         if(table.has(h)) continue;
-        const rec = {state:ns, path:[...node.path, token], lastFamily:fam, lastHand:newHand, regrips:newRegrips};
+        const rec = {state:ns, path:[...node.path, token], lastGroup:grp, lastHand:newHand, regrips:newRegrips};
         table.set(h, rec);
         next.push(rec);
       }
@@ -308,15 +323,16 @@ function bfsCollect(startState, maxD, maxRegripCap, deadline){
 }
 
 function replayMetrics(moves){
-  let lastFamily=null, lastHand=null, regrips=0;
+  let lastGroup=null, lastHand=null, regrips=0;
   for(const token of moves){
+    const grp = MOVE_GROUP[token];
+    if(grp===lastGroup) return null;
     const fam = MOVE_FAMILY[token];
-    if(fam===lastFamily) return null;
     let addRegrip=0;
     if(fam==='X') addRegrip=1; else if((fam==='R'||fam==='L') && lastHand && fam!==lastHand) addRegrip=1;
     regrips += addRegrip;
     lastHand = (fam==='R'||fam==='L') ? fam : lastHand;
-    lastFamily = fam;
+    lastGroup = grp;
   }
   return regrips;
 }
@@ -387,8 +403,8 @@ function buildNet(){
 
 function loadSolved(){
   for(let i=0;i<5;i++){
-    cellState['ubB_'+i]=3; cellState['ubU_'+i]=0;
-    cellState['ufU_'+i]=0; cellState['ufF_'+i]=2;
+    cellState['ubB_'+i]=1; cellState['ubU_'+i]=0; // 青, 白
+    cellState['ufU_'+i]=0; cellState['ufF_'+i]=2; // 白, 緑
   }
   buildNet();
 }
