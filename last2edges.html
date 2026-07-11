@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>7x7 ラスト2エッジ 手順探索ツール</title>
+<style>
+  :root{ --gray:#b9bec4; --bg:#f4f5f7; --panel:#ffffff; --line:#d6d9de; --accent:#2f6fed; }
+  body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;background:var(--bg);margin:0;padding:24px;color:#20242b;}
+  h1{font-size:20px;margin:0 0 4px;}
+  .sub{color:#5b6270;font-size:13px;margin-bottom:18px;}
+  .layout{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;}
+  .netPanel{width:340px;}
+  .ctrlPanel{width:320px;}
+  .resultPanel{flex:1;min-width:360px;}
+  h2{font-size:14px;margin:0 0 10px;color:#333;}
+  .net{display:flex;flex-direction:column;align-items:center;gap:2px;margin:8px 0 4px;}
+  .row{display:flex;gap:2px;}
+  .cell{width:34px;height:34px;border:1px solid #8b9099;border-radius:3px;box-sizing:border-box;cursor:pointer;}
+  .cell.deco{background:var(--gray);cursor:default;border-color:#9aa0a8;}
+  .cell.corner{visibility:hidden;}
+  .rowlabel{font-size:10px;color:#8a8f98;width:70px;text-align:right;margin-right:6px;align-self:center;}
+  .rowwrap{display:flex;align-items:center;}
+  .spacer{height:14px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#9aa0a8;}
+  .legend{font-size:11px;color:#6a6f78;margin-top:10px;line-height:1.6;}
+  .presetBtns{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;}
+  button{font-size:12px;padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer;}
+  button:hover{background:#f0f2f5;}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;}
+  button.primary:hover{background:#255bd1;}
+  button:disabled{opacity:.5;cursor:not-allowed;}
+  label{font-size:12px;display:block;margin:10px 0 4px;color:#444;}
+  input[type=number]{width:80px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;}
+  .field{display:flex;justify-content:space-between;align-items:center;}
+  .note{font-size:11px;color:#8a8f98;margin-top:4px;line-height:1.5;}
+  .status{font-size:13px;margin:10px 0;padding:8px 10px;border-radius:6px;background:#eef2fb;color:#2f4a8f;}
+  .status.err{background:#fdecec;color:#a12626;}
+  .status.ok{background:#eafaf0;color:#1f7a45;}
+  .status.warn{background:#fff6e0;color:#8a6300;}
+  .solList{display:flex;flex-direction:column;gap:8px;max-height:560px;overflow:auto;}
+  .sol{border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px;}
+  .sol .moves{font-family:"SFMono-Regular",Consolas,monospace;font-size:14px;font-weight:600;letter-spacing:.3px;word-break:break-all;}
+  .sol .meta{font-size:11px;color:#7a8090;margin-top:6px;}
+  .badge{display:inline-block;background:#eef1f5;border-radius:4px;padding:1px 6px;margin-right:6px;}
+  hr{border:none;border-top:1px solid var(--line);margin:14px 0;}
+  details{margin-top:10px;font-size:12px;color:#555;}
+  details summary{cursor:pointer;color:var(--accent);}
+</style>
+</head>
+<body>
+
+<h1>7x7 ラスト2エッジ 手順探索ツール</h1>
+<div class="sub">崩れた UF / UB の2エッジを、指定した手数・持ち替え回数の範囲で双方向探索します。</div>
+
+<div class="layout">
+  <div class="panel netPanel">
+    <h2>崩れた状態の入力（上から見た展開図）</h2>
+    <div class="net" id="net"></div>
+    <div class="presetBtns">
+      <button id="btnSolved">全て解決状態にリセット</button>
+    </div>
+    <div class="legend">
+      各セルをクリックすると色が切り替わります（白→緑→赤→青→橙→黄）。<br>
+      上2段＝UBエッジ（上：Bフラップ／下：U面）、下2段＝UFエッジ（上：U面／下：Fフラップ）。<br>
+      中央のグレー部分は今回関係しないため省略しています。<br>
+      <b>注意：</b>本ツールは色の組み合わせを自由に指定できますが、物理的に到達不可能な組み合わせ（実際のキューブでは起こり得ない色配置）を入力すると解が存在しないことがあります。UB側は本来「白・青」、UF側は本来「白・緑」のピースだけで構成されるのが現実的です。
+    </div>
+  </div>
+
+  <div class="panel ctrlPanel">
+    <h2>探索条件</h2>
+    <div class="field"><label style="margin:0">最大手数</label><input type="number" id="maxDepth" value="12" min="2" max="20"></div>
+    <div class="field"><label style="margin:0">最大持ち替え回数</label><input type="number" id="maxRegrip" value="4" min="0" max="10"></div>
+    <div class="field"><label style="margin:0">表示する解の数</label><input type="number" id="maxSol" value="6" min="1" max="30"></div>
+    <div class="note">
+      使用手：U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, x（x2は不使用）。<br>
+      実在する7x7ラスト2エッジの手順は14〜19手程度になることが多いですが、双方向探索であっても手数が14を超えるとブラウザのメモリ上限に達し探索が完了しない場合があります。まずは12前後から試し、見つからない場合に少しずつ増やすことをおすすめします。
+    </div>
+    <details>
+      <summary>探索方式・持ち替えカウントの仕様について</summary>
+      <div style="margin-top:6px;line-height:1.6;">
+        ・探索は双方向探索（開始状態からと完成状態から半分ずつ探索して真ん中で合流）を用いています。手数が大きくても比較的高速に探索できますが、最大手数を大きくするほど時間・メモリを多く使います。<br>
+        ・持ち替え回数は「R系⇔L系の手の切り替え」および「xの実行」をそれぞれ1回とカウントする簡易的な近似です。U2は持ち替えなしとみなします。実際の持ち方の感覚とは多少異なる場合があります。<br>
+        ・崩れたラスト2エッジ以外のエッジは、手順の前後で完全に元の状態へ戻ることを条件に探索しています。
+      </div>
+    </details>
+    <hr>
+    <button class="primary" id="btnSearch" style="width:100%">探索する</button>
+    <div id="status" class="status" style="display:none"></div>
+  </div>
+
+  <div class="panel resultPanel">
+    <h2>見つかった手順</h2>
+    <div class="solList" id="solList"><div class="note">まだ探索していません。</div></div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   1. 高速キューブエンジン（固定スロット + Uint8Array 状態）
+   ============================================================ */
+const AXES = ['x','y','z'];
+const FACE_OF = { x:{0:'L',6:'R'}, y:{0:'D',6:'U'}, z:{0:'B',6:'F'} };
+
+function genSlots(){
+  const slots = [];
+  for(let i=0;i<3;i++) for(let j=i+1;j<3;j++){
+    const a=AXES[i], b=AXES[j], freeAxis=AXES[3-i-j];
+    for(const va of [0,6]) for(const vb of [0,6]) for(let vf=1; vf<=5; vf++){
+      const pos={x:0,y:0,z:0}; pos[a]=va; pos[b]=vb; pos[freeAxis]=vf;
+      const fa=FACE_OF[a][va], fb=FACE_OF[b][vb];
+      slots.push({pos, faces:[fa,fb]});
+    }
+  }
+  return slots;
+}
+const SLOTS = genSlots();
+const posKey = p => p.x+','+p.y+','+p.z;
+const SLOT_INDEX = new Map(SLOTS.map((s,i)=>[posKey(s.pos), i]));
+
+function rotX(pos, dir){ const y=pos.y-3,z=pos.z-3; let ny,nz; if(dir===1){ny=-z;nz=y;}else{ny=z;nz=-y;} return {x:pos.x,y:ny+3,z:nz+3}; }
+const NORM_X={U:[1,0],D:[-1,0],F:[0,1],B:[0,-1]};
+function relabelX(face,dir){ if(!(face in NORM_X)) return face; const [dy,dz]=NORM_X[face]; let ndy,ndz; if(dir===1){ndy=-dz;ndz=dy;}else{ndy=dz;ndz=-dy;} for(const f in NORM_X){if(NORM_X[f][0]===ndy&&NORM_X[f][1]===ndz)return f;} return face; }
+function rotY180(pos){ const x=pos.x-3,z=pos.z-3; return {x:-x+3,y:pos.y,z:-z+3}; }
+const NORM_Y={R:[1,0],L:[-1,0],F:[0,1],B:[0,-1]};
+function relabelY180(face){ if(!(face in NORM_Y)) return face; const [dx,dz]=NORM_Y[face]; const ndx=-dx,ndz=-dz; for(const f in NORM_Y){if(NORM_Y[f][0]===ndx&&NORM_Y[f][1]===ndz)return f;} return face; }
+
+function buildTransform(xPredOrNull, dir, isY180){
+  const transform = SLOTS.map((s,i)=>({src:i, flip:false}));
+  for(let i=0;i<SLOTS.length;i++){
+    const s = SLOTS[i];
+    const affected = isY180 ? (s.pos.y===6) : xPredOrNull(s.pos.x);
+    if(!affected) continue;
+    let newPos, newFaces;
+    if(isY180){ newPos = rotY180(s.pos); newFaces=[relabelY180(s.faces[0]), relabelY180(s.faces[1])]; }
+    else { newPos = rotX(s.pos, dir); newFaces=[relabelX(s.faces[0],dir), relabelX(s.faces[1],dir)]; }
+    const destIdx = SLOT_INDEX.get(posKey(newPos));
+    const destFaces = SLOTS[destIdx].faces;
+    let flip;
+    if(newFaces[0]===destFaces[0] && newFaces[1]===destFaces[1]) flip=false;
+    else if(newFaces[0]===destFaces[1] && newFaces[1]===destFaces[0]) flip=true;
+    else throw new Error('internal error: face mismatch');
+    transform[destIdx] = { src:i, flip };
+  }
+  return transform;
+}
+
+const MOVE_DEFS = {
+  'U2':  {isY180:true},
+  'x':   {xPred:v=>true, dir:1},
+  "x'":  {xPred:v=>true, dir:-1},
+  'R':   {xPred:v=>v===6, dir:1},
+  "R'":  {xPred:v=>v===6, dir:-1},
+  'Rw':  {xPred:v=>v>=5, dir:1},
+  "Rw'": {xPred:v=>v>=5, dir:-1},
+  '3Rw': {xPred:v=>v>=4, dir:1},
+  "3Rw'":{xPred:v=>v>=4, dir:-1},
+  '4Rw': {xPred:v=>v>=3, dir:1},
+  "4Rw'":{xPred:v=>v>=3, dir:-1},
+  'Lw':  {xPred:v=>v<=1, dir:-1},
+  "Lw'": {xPred:v=>v<=1, dir:1},
+  '3Lw': {xPred:v=>v<=2, dir:-1},
+  "3Lw'":{xPred:v=>v<=2, dir:1},
+};
+const MOVE_TRANSFORM = {};
+for(const token in MOVE_DEFS){
+  const d = MOVE_DEFS[token];
+  MOVE_TRANSFORM[token] = buildTransform(d.xPred, d.dir, !!d.isY180);
+}
+const BASE_MOVES = Object.keys(MOVE_TRANSFORM); // 15 tokens (no *2, no x2)
+const INV = {R:"R'","R'":'R',Rw:"Rw'","Rw'":'Rw','3Rw':"3Rw'","3Rw'":'3Rw','4Rw':"4Rw'","4Rw'":'4Rw',
+             Lw:"Lw'","Lw'":'Lw','3Lw':"3Lw'","3Lw'":'3Lw',U2:'U2',x:"x'","x'":'x'};
+const MOVE_FAMILY = {U2:'U',R:'R',"R'":'R',Rw:'R',"Rw'":'R','3Rw':'R',"3Rw'":'R','4Rw':'R',"4Rw'":'R',
+                      Lw:'L',"Lw'":'L','3Lw':'L',"3Lw'":'L',x:'X',"x'":'X'};
+
+function applyMoveFast(state, token){
+  const tr = MOVE_TRANSFORM[token];
+  const out = new Uint8Array(120);
+  for(let d=0; d<60; d++){
+    const {src, flip} = tr[d];
+    if(!flip){ out[d*2]=state[src*2]; out[d*2+1]=state[src*2+1]; }
+    else { out[d*2]=state[src*2+1]; out[d*2+1]=state[src*2]; }
+  }
+  return out;
+}
+function hashState(state){
+  let s='';
+  for(let i=0;i<state.length;i++) s += String.fromCharCode(state[i]+32);
+  return s;
+}
+function isSolvedFast(state){
+  for(let i=0;i<120;i++) if(state[i]!==SOLVED[i]) return false;
+  return true;
+}
+const FACE_COLOR = {U:0,D:1,F:2,B:3,R:4,L:5};
+function genSolvedArray(){
+  const arr = new Uint8Array(120);
+  for(let i=0;i<60;i++){ arr[i*2]=FACE_COLOR[SLOTS[i].faces[0]]; arr[i*2+1]=FACE_COLOR[SLOTS[i].faces[1]]; }
+  return arr;
+}
+const SOLVED = genSolvedArray();
+
+/* ============================================================
+   2. 崩れた状態の構築（UI入力 → 状態配列）
+   ============================================================ */
+const PALETTE = ['#ffffff','#ffd500','#009e49','#0051ba','#c8102e','#ff8200'];
+const COLOR_IDX = {'#ffffff':0,'#ffd500':1,'#009e49':2,'#0051ba':3,'#c8102e':4,'#ff8200':5};
+
+const UB_SLOTS = [1,2,3,4,5].map(x => SLOT_INDEX.get(posKey({x,y:6,z:0})));
+const UF_SLOTS = [1,2,3,4,5].map(x => SLOT_INDEX.get(posKey({x,y:6,z:6})));
+
+function buildScrambledState(ubColors, ufColors){
+  const arr = SOLVED.slice();
+  for(let k=0;k<5;k++){
+    const i = UB_SLOTS[k];
+    arr[i*2]   = COLOR_IDX[ubColors.U[k]];
+    arr[i*2+1] = COLOR_IDX[ubColors.B[k]];
+    const j = UF_SLOTS[k];
+    arr[j*2]   = COLOR_IDX[ufColors.U[k]];
+    arr[j*2+1] = COLOR_IDX[ufColors.F[k]];
+  }
+  return arr;
+}
+
+/* ============================================================
+   3. 双方向探索 (meet-in-the-middle BFS)
+   ============================================================ */
+function bfsCollect(startState, maxD, maxRegripCap, deadline){
+  const table = new Map();
+  const h0 = hashState(startState);
+  const root = {state:startState, path:[], lastFamily:null, lastHand:null, regrips:0};
+  table.set(h0, root);
+  let frontier = [root];
+  for(let d=1; d<=maxD; d++){
+    const next = [];
+    for(const node of frontier){
+      for(const token of BASE_MOVES){
+        const fam = MOVE_FAMILY[token];
+        if(fam===node.lastFamily) continue;
+        let addRegrip=0;
+        if(fam==='X') addRegrip=1; else if((fam==='R'||fam==='L') && node.lastHand && fam!==node.lastHand) addRegrip=1;
+        const newRegrips = node.regrips+addRegrip;
+        if(newRegrips>maxRegripCap) continue;
+        const newHand = (fam==='R'||fam==='L') ? fam : node.lastHand;
+        const ns = applyMoveFast(node.state, token);
+        const h = hashState(ns);
+        if(table.has(h)) continue;
+        const rec = {state:ns, path:[...node.path, token], lastFamily:fam, lastHand:newHand, regrips:newRegrips};
+        table.set(h, rec);
+        next.push(rec);
+      }
+      if(Date.now() > deadline) return {table, timedOut:true};
+    }
+    frontier = next;
+    if(Date.now() > deadline) return {table, timedOut:true};
+  }
+  return {table, timedOut:false};
+}
+
+function replayMetrics(moves){
+  let lastFamily=null, lastHand=null, regrips=0;
+  for(const token of moves){
+    const fam = MOVE_FAMILY[token];
+    if(fam===lastFamily) return null;
+    let addRegrip=0;
+    if(fam==='X') addRegrip=1; else if((fam==='R'||fam==='L') && lastHand && fam!==lastHand) addRegrip=1;
+    regrips += addRegrip;
+    lastHand = (fam==='R'||fam==='L') ? fam : lastHand;
+    lastFamily = fam;
+  }
+  return regrips;
+}
+
+function bidirectionalSearch(scrambled, maxDepth, maxRegrip, maxSol, timeBudgetMs){
+  const deadline = Date.now() + timeBudgetMs;
+  const F = Math.ceil(maxDepth/2), B = maxDepth - F;
+  const fwd = bfsCollect(scrambled, F, maxRegrip, deadline);
+  const bwd = bfsCollect(SOLVED, B, maxRegrip, deadline);
+  const fwdTable = fwd.table, bwdTable = bwd.table;
+
+  const solutions = [];
+  const seen = new Set();
+  for(const [h, fnode] of fwdTable){
+    if(bwdTable.has(h)){
+      const bnode = bwdTable.get(h);
+      const suffix = bnode.path.slice().reverse().map(m=>INV[m]);
+      const full = [...fnode.path, ...suffix];
+      if(full.length===0 || full.length>maxDepth) continue;
+      const key = full.join(' ');
+      if(seen.has(key)) continue;
+      const regrips = replayMetrics(full);
+      if(regrips===null || regrips>maxRegrip) continue;
+      seen.add(key);
+      solutions.push({moves:full, regrips});
+    }
+  }
+  solutions.sort((a,b)=> a.moves.length-b.moves.length || a.regrips-b.regrips);
+  return {
+    solutions: solutions.slice(0,maxSol),
+    fwdSize: fwdTable.size, bwdSize: bwdTable.size,
+    timedOut: fwd.timedOut || bwd.timedOut
+  };
+}
+
+/* ============================================================
+   4. UI
+   ============================================================ */
+let cellState = {};
+
+function buildNet(){
+  const net = document.getElementById('net');
+  net.innerHTML = '';
+  function interactiveRow(prefix, label){
+    const wrap=document.createElement('div'); wrap.className='rowwrap';
+    const lab=document.createElement('div'); lab.className='rowlabel'; lab.textContent=label;
+    const row=document.createElement('div'); row.className='row';
+    const c1=document.createElement('div'); c1.className='cell corner'; row.appendChild(c1);
+    for(let i=0;i<5;i++){
+      const id=prefix+i;
+      if(!(id in cellState)) cellState[id]=0;
+      const c=document.createElement('div'); c.className='cell'; c.dataset.id=id;
+      c.style.background=PALETTE[cellState[id]];
+      c.addEventListener('click', ()=>{ cellState[id]=(cellState[id]+1)%PALETTE.length; c.style.background=PALETTE[cellState[id]]; });
+      row.appendChild(c);
+    }
+    const c2=document.createElement('div'); c2.className='cell corner'; row.appendChild(c2);
+    wrap.appendChild(lab); wrap.appendChild(row);
+    return wrap;
+  }
+  const spacer=document.createElement('div'); spacer.className='spacer'; spacer.textContent='(U面 内側 — 今回は無関係のため省略)';
+  net.appendChild(interactiveRow('ubB_','UB / B面'));
+  net.appendChild(interactiveRow('ubU_','UB / U面'));
+  net.appendChild(spacer);
+  net.appendChild(interactiveRow('ufU_','UF / U面'));
+  net.appendChild(interactiveRow('ufF_','UF / F面'));
+}
+
+function loadSolved(){
+  for(let i=0;i<5;i++){
+    cellState['ubB_'+i]=3; cellState['ubU_'+i]=0;
+    cellState['ufU_'+i]=0; cellState['ufF_'+i]=2;
+  }
+  buildNet();
+}
+document.getElementById('btnSolved').addEventListener('click', loadSolved);
+loadSolved();
+
+function readNetToColors(){
+  const ub={B:[],U:[]}, uf={U:[],F:[]};
+  for(let i=0;i<5;i++){
+    ub.B.push(PALETTE[cellState['ubB_'+i]]);
+    ub.U.push(PALETTE[cellState['ubU_'+i]]);
+    uf.U.push(PALETTE[cellState['ufU_'+i]]);
+    uf.F.push(PALETTE[cellState['ufF_'+i]]);
+  }
+  return {ub, uf};
+}
+
+function setStatus(msg, cls){
+  const el=document.getElementById('status');
+  el.style.display='block'; el.className='status'+(cls?(' '+cls):''); el.textContent=msg;
+}
+
+function renderSolutions(result){
+  const list=document.getElementById('solList');
+  list.innerHTML='';
+  if(result.solutions.length===0){
+    list.innerHTML='<div class="note">条件を満たす手順は見つかりませんでした。最大手数を増やすか、状態を見直してください。</div>';
+    return;
+  }
+  for(const sol of result.solutions){
+    const div=document.createElement('div'); div.className='sol';
+    const moves=document.createElement('div'); moves.className='moves'; moves.textContent=sol.moves.join(' ');
+    const meta=document.createElement('div'); meta.className='meta';
+    meta.innerHTML=`<span class="badge">${sol.moves.length}手</span><span class="badge">持ち替え ${sol.regrips}回</span>`;
+    div.appendChild(moves); div.appendChild(meta); list.appendChild(div);
+  }
+}
+
+document.getElementById('btnSearch').addEventListener('click', ()=>{
+  const maxDepth = Math.max(2, Math.min(22, parseInt(document.getElementById('maxDepth').value,10)||16));
+  const maxRegrip = Math.max(0, parseInt(document.getElementById('maxRegrip').value,10)||4);
+  const maxSol = Math.max(1, parseInt(document.getElementById('maxSol').value,10)||6);
+
+  const btn=document.getElementById('btnSearch');
+  btn.disabled=true;
+  setStatus('探索中です。最大手数が大きいと数十秒〜数分かかることがあります…');
+  document.getElementById('solList').innerHTML='<div class="note">探索中…</div>';
+
+  setTimeout(()=>{
+    try{
+      const {ub,uf} = readNetToColors();
+      const initState = buildScrambledState(ub, uf);
+
+      if(isSolvedFast(initState)){
+        setStatus('現在の入力はすでに解決状態です。セルをクリックして崩れた状態を入力してください。', 'err');
+        btn.disabled=false; return;
+      }
+
+      const t0=performance.now();
+      const timeBudgetMs = 60000;
+      const result = bidirectionalSearch(initState, maxDepth, maxRegrip, maxSol, timeBudgetMs);
+      const t1=performance.now();
+
+      renderSolutions(result);
+
+      if(result.solutions.length>0){
+        setStatus(`解 ${result.solutions.length} 件を発見（${((t1-t0)/1000).toFixed(1)}秒 / 探索状態数: 前方${result.fwdSize.toLocaleString()}・後方${result.bwdSize.toLocaleString()}）`, 'ok');
+      } else if(result.timedOut){
+        setStatus('探索が時間予算内に完了しませんでした。最大手数を小さくするか、再度お試しください。', 'warn');
+      } else {
+        setStatus(`最大手数(${maxDepth}手)・持ち替え回数(${maxRegrip}回)以内では解が見つかりませんでした。入力した色配置が物理的に到達不可能である可能性もあります。`, 'err');
+      }
+    } catch(e){
+      console.error(e);
+      setStatus('エラーが発生しました: '+e.message, 'err');
+    } finally {
+      btn.disabled=false;
+    }
+  }, 30);
+});
+</script>
+</body>
+</html>
