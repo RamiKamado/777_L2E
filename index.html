@@ -40,6 +40,9 @@
   .status.err{background:#fdecec;color:#a12626;}
   .status.ok{background:#eafaf0;color:#1f7a45;}
   .status.warn{background:#fff6e0;color:#8a6300;}
+  .progress{font-size:12px;color:#6a6f78;margin-top:8px;padding:9px 11px;border:1px dashed var(--line);border-radius:8px;background:#fafbfc;line-height:1.7;}
+  .progress .pmove{font-family:"SFMono-Regular",Consolas,monospace;font-weight:700;color:#2f4a8f;font-size:13px;}
+  .progress .prow{display:flex;justify-content:space-between;gap:8px;}
   .solList{display:flex;flex-direction:column;gap:8px;max-height:520px;overflow:auto;-webkit-overflow-scrolling:touch;}
   .sol{border:1px solid var(--line);border-radius:8px;padding:11px 12px;font-size:13px;}
   .sol .moves{font-family:"SFMono-Regular",Consolas,monospace;font-size:14px;font-weight:600;letter-spacing:.3px;word-break:break-all;line-height:1.5;}
@@ -111,6 +114,7 @@
     <hr>
     <button class="primary" id="btnSearch" style="width:100%">探索する</button>
     <div id="status" class="status" style="display:none"></div>
+    <div id="progress" class="progress" style="display:none"></div>
   </div>
 
   <div class="panel resultPanel">
@@ -488,7 +492,10 @@ function idaDfsSync(ctx, state, g, threshold, path, lastGroup, lastHand, regrips
 // 最上位（1手目）だけは非同期ループにして、各枝の合間にUIへ制御を返す。
 async function idaDfsTop(ctx, state, threshold){
   const path = [];
+  const total = ctx.moves.length;
+  let idx = 0;
   for(const token of ctx.moves){
+    idx++;
     const grp = MOVE_GROUP[token];
     const fam = MOVE_FAMILY[token];
     let addRegrip = (fam==='X') ? 1 : 0;
@@ -496,6 +503,7 @@ async function idaDfsTop(ctx, state, threshold){
     const newHand = (fam==='R'||fam==='L') ? fam : null;
     const ns = applyMoveFast(state, token);
     path.push(token);
+    if(ctx.onProgress) ctx.onProgress({threshold, currentMove:token, moveIndex:idx, moveTotal:total, nodeCounter:ctx.nodeCounter, solutionsFound:ctx.solutions.length, minDepth:ctx.minDepth});
     try{
       idaDfsSync(ctx, ns, 1, threshold, path, grp, newHand, addRegrip);
     } catch(e){
@@ -511,12 +519,12 @@ async function idaDfsTop(ctx, state, threshold){
 
 // 最小手数を自動的に見つけたうえで、そこから指定した追加手数まで深く探索する。
 // メモリはほぼ一定（再帰の深さ分のみ）なので、手数の上限を大きくしてもクラッシュしない。
-async function findMinDepthThenSearch(scrambled, maxRegrip, maxSol, extraDepth, timeBudgetMs, hardDepthCap, moves){
+async function findMinDepthThenSearch(scrambled, maxRegrip, maxSol, extraDepth, timeBudgetMs, hardDepthCap, moves, onProgress){
   const deadline = Date.now() + timeBudgetMs;
   await ensurePatternDB();
   const ctx = {
     solutions: [], seen: new Set(), maxRegrip, maxSol, moves: moves || BASE_MOVES,
-    deadline, nodeCounter: 0, timedOut: false, nextThreshold: Infinity
+    deadline, nodeCounter: 0, timedOut: false, nextThreshold: Infinity, onProgress, minDepth: null
   };
 
   let threshold = heuristic(scrambled);
@@ -528,11 +536,13 @@ async function findMinDepthThenSearch(scrambled, maxRegrip, maxSol, extraDepth, 
       return {solutions:ctx.solutions, minDepth, incomplete: minDepth===null, timedOut:false, exceededHardCap:true, triedUpTo:hardDepthCap};
     }
     ctx.nextThreshold = Infinity;
+    if(onProgress) onProgress({threshold, currentMove:null, moveIndex:0, moveTotal:ctx.moves.length, nodeCounter:ctx.nodeCounter, solutionsFound:ctx.solutions.length, minDepth, phase:'start'});
     await idaDfsTop(ctx, scrambled, threshold);
     if(ctx.timedOut){ return {solutions:ctx.solutions, minDepth, incomplete: minDepth===null, timedOut:true, triedUpTo:threshold}; }
 
     if(minDepth===null && ctx.solutions.length>0){
       minDepth = Math.min(...ctx.solutions.map(s=>s.moves.length));
+      ctx.minDepth = minDepth;
     }
     if(minDepth!==null && threshold >= minDepth+extraDepth) break;
     if(ctx.nextThreshold===Infinity) break; // これ以上探索する枝がない（解なし、と判断できる）
@@ -608,6 +618,26 @@ function setStatus(msg, cls){
   el.style.display='block'; el.className='status'+(cls?(' '+cls):''); el.textContent=msg;
 }
 
+let searchStartTime = 0;
+function showProgress(info){
+  const el = document.getElementById('progress');
+  el.style.display = 'block';
+  const elapsed = ((performance.now()-searchStartTime)/1000).toFixed(1);
+  const moveLabel = info.currentMove
+    ? `<span class="pmove">${info.currentMove}</span>（1手目 ${info.moveIndex}/${info.moveTotal}）`
+    : '準備中…';
+  const minDepthLabel = info.minDepth!==null ? `${info.minDepth}手` : '未発見';
+  el.innerHTML =
+    `<div class="prow"><span>探索中の手数</span><span>${info.threshold}手</span></div>` +
+    `<div class="prow"><span>試している1手目</span><span>${moveLabel}</span></div>` +
+    `<div class="prow"><span>調べた局面数</span><span>${info.nodeCounter.toLocaleString()}</span></div>` +
+    `<div class="prow"><span>発見済みの最小手数</span><span>${minDepthLabel}</span></div>` +
+    `<div class="prow"><span>経過時間</span><span>${elapsed}秒</span></div>`;
+}
+function hideProgress(){
+  document.getElementById('progress').style.display = 'none';
+}
+
 function renderSolutions(result){
   const list=document.getElementById('solList');
   list.innerHTML='';
@@ -637,6 +667,8 @@ document.getElementById('btnSearch').addEventListener('click', async ()=>{
   btn.disabled=true;
   setStatus('準備中です（初回は下限値テーブルの構築に数秒かかります）…');
   document.getElementById('solList').innerHTML='<div class="note">探索中…</div>';
+  searchStartTime = performance.now();
+  showProgress({threshold:'-', currentMove:null, moveIndex:0, moveTotal:0, nodeCounter:0, minDepth:null});
 
   await yieldToUI(); // 「探索中」表示を確実に描画させてから重い処理に入る
 
@@ -646,14 +678,15 @@ document.getElementById('btnSearch').addEventListener('click', async ()=>{
 
     if(isGoalState(initState)){
       setStatus('現在の入力はすでに条件を満たしています。セルをクリックして崩れた状態を入力してください。', 'err');
-      btn.disabled=false; return;
+      btn.disabled=false; hideProgress(); return;
     }
 
     const t0=performance.now();
     const timeBudgetMs = timeBudgetMin * 60000;
-    const result = await findMinDepthThenSearch(initState, maxRegrip, maxSol, extraDepth, timeBudgetMs, HARD_DEPTH_CAP, activeMoves);
+    const result = await findMinDepthThenSearch(initState, maxRegrip, maxSol, extraDepth, timeBudgetMs, HARD_DEPTH_CAP, activeMoves, showProgress);
     const t1=performance.now();
 
+    hideProgress();
     renderSolutions(result);
 
     if(result.solutions.length>0){
@@ -668,6 +701,7 @@ document.getElementById('btnSearch').addEventListener('click', async ()=>{
   } catch(e){
     console.error(e);
     setStatus('エラーが発生しました: '+e.message, 'err');
+    hideProgress();
   } finally {
     btn.disabled=false;
   }
