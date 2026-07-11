@@ -75,7 +75,7 @@
     <div class="note">
       使用手：U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, F, x（x2は不使用）。R/Rw/3Rw/4Rw/Lw/3Lw/Fはいずれも '（逆）・2（180°）も使用できます。<br>
       まず最短で解ける手数（最小手数）を自動的に見つけ、そこから指定した手数だけ深く探索して手順の候補を集めます。例えば最小手数が8手で「+4」なら、8〜12手の解を探します。<br>
-      探索は1方向あたり最大120万状態でメモリ保護のため打ち切ります。
+      探索は1方向あたり最大250万状態でメモリ保護のため打ち切ります（従来比約2倍）。深い手数まで探索すると数十秒〜2分程度かかることがあります。
     </div>
     <details>
       <summary>探索方式・持ち替えカウントの仕様について</summary>
@@ -295,7 +295,7 @@ const MOVE_GROUP = {
 /* ============================================================
    3. 双方向探索 (meet-in-the-middle BFS)
    ============================================================ */
-const STATE_CAP = 1200000; // 1方向あたりの状態数の上限（メモリ枯渇によるクラッシュ防止）
+const STATE_CAP = 2500000; // 1方向あたりの状態数の上限（メモリ枯渇によるクラッシュ防止）
 
 function yieldToUI(){ return new Promise(resolve => setTimeout(resolve, 0)); }
 
@@ -526,7 +526,7 @@ document.getElementById('btnSearch').addEventListener('click', async ()=>{
     }
 
     const t0=performance.now();
-    const timeBudgetMs = 45000;
+    const timeBudgetMs = 150000;
     const result = await findMinDepthThenSearch(initState, maxRegrip, maxSol, extraDepth, timeBudgetMs, HARD_DEPTH_CAP);
     const t1=performance.now();
 
