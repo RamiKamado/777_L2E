@@ -54,6 +54,10 @@
   .checkrow{display:flex;align-items:center;gap:8px;margin:14px 0 4px;cursor:pointer;padding:4px 0;}
   .checkrow input[type=checkbox]{width:20px;height:20px;margin:0;flex:0 0 auto;}
   .checkrow span{font-size:13px;color:#444;}
+  .familyGrid{display:grid;grid-template-columns:repeat(auto-fill, minmax(76px,1fr));gap:6px;margin-top:6px;}
+  .famItem{display:flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:7px;padding:7px 8px;cursor:pointer;background:#fafbfc;}
+  .famItem input[type=checkbox]{width:18px;height:18px;margin:0;flex:0 0 auto;}
+  .famItem span{font-family:"SFMono-Regular",Consolas,monospace;font-size:13px;font-weight:600;color:#333;}
 
   @media (max-width: 720px){
     body{padding:12px;}
@@ -93,14 +97,22 @@
     <div class="field"><label style="margin:0">最大持ち替え回数</label><input type="number" id="maxRegrip" value="4" min="0" max="10"></div>
     <div class="field"><label style="margin:0">表示する解の数</label><input type="number" id="maxSol" value="6" min="1" max="30"></div>
     <div class="field"><label style="margin:0">探索時間の上限（分）</label><input type="number" id="timeBudgetMin" value="30" min="1" max="120"></div>
-    <label class="checkrow">
-      <input type="checkbox" id="restrictUF" checked>
-      <span>U・FはU2・F2のみを使用する</span>
+    <div class="field"><label style="margin:0">探索ノード数の上限</label><input type="number" id="maxNodes" value="60000000" min="1000000" max="500000000" step="1000000"></div>
+    <label style="margin:12px 0 4px;">使用する回転記号</label>
+    <div class="familyGrid" id="familyGrid"></div>
+    <div class="presetBtns" style="margin-top:8px;">
+      <button type="button" id="btnFamAll">全て選択</button>
+      <button type="button" id="btnFamNone">全て解除</button>
+    </div>
+    <label class="checkrow" style="margin-top:8px;">
+      <input type="checkbox" id="restrictF2" checked>
+      <span>FはF2のみを使用する（F・F'は使わない）</span>
     </label>
     <div class="note">
       使用手：U2, R, Rw, 3Rw, 4Rw, Lw, 3Lw, F, x（x2は不使用）。R/Rw/3Rw/4Rw/Lw/3Lw/Fはいずれも '（逆）・2（180°）も使用できます。<br>
+      さらに内側スライスのみを回す r（=Rw R'）, 3r（=3Rw Rw'）, m（=3Rw 4Rw'）, l（=Lw L'）, 3l（=3Lw Lw'）も使用できます。これらもいずれも '（逆）・2（180°）が使えます（例: 3l'）。<br>
       まず最短で解ける手数（最小手数）を自動的に見つけ、そこから指定した手数だけ深く探索して手順の候補を集めます。例えば最小手数が8手で「+4」なら、8〜12手の解を探します。最大30手まで探索できます。<br>
-      探索方式は反復深化探索（IDA*）です。メモリ使用量は手数によらずごく少量なのでクラッシュしませんが、深い手数（20手超など）は非常に時間がかかることがあります（時間の上限に達すると安全に打ち切ります）。
+      探索方式は反復深化探索（IDA*）です。メモリ使用量は手数によらずごく少量なのでクラッシュしにくい設計ですが、有効にする回転記号が多いほど、また深い手数になるほど非常に時間がかかることがあります（時間・探索ノード数のいずれかが上限に達すると安全に打ち切ります）。
     </div>
     <details>
       <summary>探索方式・持ち替えカウントの仕様について</summary>
@@ -186,7 +198,8 @@ function buildTransform(kind, pred, dir){
 
 // 同系統の手を2回連続で行うのは探索の「直前と同じ系統は禁止」ルールに引っかかるため、
 // 180°回転（例: R2, Rw2, F2 …）は「1手」として扱えるよう、変換テーブルを合成して作る。
-function buildDoubleTransform(baseTransform){
+// composeTransform(t1, t2): t1を適用した後にt2を適用した場合と同じ効果の変換テーブルを作る。
+function composeTransform(t1, t2){
   function apply(arr, tr){
     const out = new Array(120);
     for(let d=0; d<60; d++){
@@ -198,8 +211,8 @@ function buildDoubleTransform(baseTransform){
   }
   let sym = new Array(120);
   for(let i=0;i<120;i++) sym[i]=i;
-  sym = apply(sym, baseTransform);
-  sym = apply(sym, baseTransform);
+  sym = apply(sym, t1);
+  sym = apply(sym, t2);
   const combined = [];
   for(let d=0; d<60; d++){
     const t0 = sym[d*2];
@@ -209,6 +222,7 @@ function buildDoubleTransform(baseTransform){
   }
   return combined;
 }
+function buildDoubleTransform(baseTransform){ return composeTransform(baseTransform, baseTransform); }
 
 const MOVE_DEFS = {
   'U2':  {kind:'y180'},
@@ -222,6 +236,10 @@ const MOVE_DEFS = {
   "3Rw'":{kind:'x', pred:v=>v>=4, dir:-1},
   '4Rw': {kind:'x', pred:v=>v>=3, dir:1},
   "4Rw'":{kind:'x', pred:v=>v>=3, dir:-1},
+  '5Rw': {kind:'x', pred:v=>v>=2, dir:1},
+  "5Rw'":{kind:'x', pred:v=>v>=2, dir:-1},
+  'L':   {kind:'x', pred:v=>v===0, dir:-1},
+  "L'":  {kind:'x', pred:v=>v===0, dir:1},
   'Lw':  {kind:'x', pred:v=>v<=1, dir:-1},
   "Lw'": {kind:'x', pred:v=>v<=1, dir:1},
   '3Lw': {kind:'x', pred:v=>v<=2, dir:-1},
@@ -236,21 +254,44 @@ for(const token in MOVE_DEFS){
 }
 // 180°回転トークンを合成して追加（1手としてカウントするため、家族連続禁止ルールの対象外にはせず
 // あくまで「1つの手」として単独で使えるようにする）
-const DOUBLE_SOURCES = ['R','Rw','3Rw','4Rw','Lw','3Lw','F'];
+const DOUBLE_SOURCES = ['R','Rw','3Rw','4Rw','5Rw','Lw','3Lw','F'];
 for(const base of DOUBLE_SOURCES){
   MOVE_TRANSFORM[base+'2'] = buildDoubleTransform(MOVE_TRANSFORM[base]);
 }
 
-const BASE_MOVES = Object.keys(MOVE_TRANSFORM); // 全ての手（F, F'を含む）
-const RESTRICTED_MOVES = BASE_MOVES.filter(t => t!=='F' && t!=="F'"); // FはF2のみ（U はもともとU2のみ）
+// 内側スライスのみを回す手（r, 3r, m, l, 3l）。2種類の幅違いのワイド回転を組み合わせて
+// 外側の層の回転を打ち消し、内側の1層だけが回る効果を作り出す。他の手と同様に '（逆）・2（180°）も用意する。
+MOVE_TRANSFORM['r']   = composeTransform(MOVE_TRANSFORM['Rw'],  MOVE_TRANSFORM["R'"]);
+MOVE_TRANSFORM["r'"]  = composeTransform(MOVE_TRANSFORM['R'],   MOVE_TRANSFORM["Rw'"]);
+MOVE_TRANSFORM['3r']  = composeTransform(MOVE_TRANSFORM['3Rw'], MOVE_TRANSFORM["Rw'"]);
+MOVE_TRANSFORM["3r'"] = composeTransform(MOVE_TRANSFORM['Rw'],  MOVE_TRANSFORM["3Rw'"]);
+MOVE_TRANSFORM["m"]   = composeTransform(MOVE_TRANSFORM['3Rw'], MOVE_TRANSFORM["4Rw'"]);
+MOVE_TRANSFORM["m'"]  = composeTransform(MOVE_TRANSFORM['4Rw'], MOVE_TRANSFORM["3Rw'"]);
+MOVE_TRANSFORM['l']   = composeTransform(MOVE_TRANSFORM['Lw'],  MOVE_TRANSFORM["L'"]);
+MOVE_TRANSFORM["l'"]  = composeTransform(MOVE_TRANSFORM['L'],   MOVE_TRANSFORM["Lw'"]);
+MOVE_TRANSFORM['3l']  = composeTransform(MOVE_TRANSFORM['3Lw'], MOVE_TRANSFORM["Lw'"]);
+MOVE_TRANSFORM["3l'"] = composeTransform(MOVE_TRANSFORM['Lw'],  MOVE_TRANSFORM["3Lw'"]);
+for(const base of ['r','3r','m','l','3l']){
+  MOVE_TRANSFORM[base+'2'] = buildDoubleTransform(MOVE_TRANSFORM[base]);
+}
+// L, L' 自体は r'/3l を組み立てるための内部部品としてのみ使用し、単独の手としては使わない。
+const HIDDEN_TOKENS = new Set(['L',"L'"]);
+
+const BASE_MOVES = Object.keys(MOVE_TRANSFORM).filter(t => !HIDDEN_TOKENS.has(t)); // 全ての手（F, F'を含む）
 const INV = {R:"R'","R'":'R',Rw:"Rw'","Rw'":'Rw','3Rw':"3Rw'","3Rw'":'3Rw','4Rw':"4Rw'","4Rw'":'4Rw',
+             '5Rw':"5Rw'","5Rw'":'5Rw',
              Lw:"Lw'","Lw'":'Lw','3Lw':"3Lw'","3Lw'":'3Lw',U2:'U2',x:"x'","x'":'x',
              F:"F'","F'":'F',
-             R2:'R2',Rw2:'Rw2','3Rw2':'3Rw2','4Rw2':'4Rw2',Lw2:'Lw2','3Lw2':'3Lw2',F2:'F2'};
+             R2:'R2',Rw2:'Rw2','3Rw2':'3Rw2','4Rw2':'4Rw2','5Rw2':'5Rw2',Lw2:'Lw2','3Lw2':'3Lw2',F2:'F2',
+             r:"r'","r'":'r','3r':"3r'","3r'":'3r',m:"m'","m'":'m',l:"l'","l'":'l','3l':"3l'","3l'":'3l',
+             r2:'r2','3r2':'3r2',m2:'m2',l2:'l2','3l2':'3l2'};
 const MOVE_FAMILY = {U2:'U',R:'R',"R'":'R',R2:'R',Rw:'R',"Rw'":'R',Rw2:'R','3Rw':'R',"3Rw'":'R','3Rw2':'R',
-                      '4Rw':'R',"4Rw'":'R','4Rw2':'R',
+                      '4Rw':'R',"4Rw'":'R','4Rw2':'R', '5Rw':'R',"5Rw'":'R','5Rw2':'R',
                       Lw:'L',"Lw'":'L',Lw2:'L','3Lw':'L',"3Lw'":'L','3Lw2':'L',
-                      x:'X',"x'":'X', F:'F',"F'":'F',F2:'F'};
+                      x:'X',"x'":'X', F:'F',"F'":'F',F2:'F',
+                      r:'R', "r'":'R', r2:'R', '3r':'R', "3r'":'R', '3r2':'R',
+                      l:'L', "l'":'L', l2:'L', '3l':'L', "3l'":'L', '3l2':'L',
+                      m:'M', "m'":'M', m2:'M'};
 
 function applyMoveFast(state, token){
   const tr = MOVE_TRANSFORM[token];
@@ -262,6 +303,22 @@ function applyMoveFast(state, token){
   }
   return out;
 }
+// applyMoveFastと同じ計算だが、新しい配列を確保せず渡されたバッファに書き込む。
+// IDA*の探索ループは膨大な回数呼ばれるため、毎回 new Uint8Array するとGCの負荷が
+// 非常に大きくなり、深い探索でメモリ不足を招く。探索の再帰では深さごとに使い回す
+// バッファ（STATE_POOL）を用意し、これを使って確保回数をゼロに近づける。
+function applyMoveFastInto(state, token, out){
+  const tr = MOVE_TRANSFORM[token];
+  for(let d=0; d<60; d++){
+    const {src, flip} = tr[d];
+    if(!flip){ out[d*2]=state[src*2]; out[d*2+1]=state[src*2+1]; }
+    else { out[d*2]=state[src*2+1]; out[d*2+1]=state[src*2]; }
+  }
+  return out;
+}
+const STATE_POOL_SIZE = 80; // xは手数にカウントしないため、実際の再帰の深さは手数上限(最大30)より大きくなりうる
+const STATE_POOL = [];
+for(let i=0;i<STATE_POOL_SIZE;i++) STATE_POOL.push(new Uint8Array(120));
 function hashState(state){
   // 各要素は0-5の6値。6要素を6進数として1文字(0-46655)にまとめることで
   // キー文字列の長さを120文字→20文字に圧縮し、Mapのメモリ使用量を大きく削減する。
@@ -314,10 +371,16 @@ const MOVE_GROUP = {
   Rw:'Rw',"Rw'":'Rw',Rw2:'Rw',
   '3Rw':'3Rw',"3Rw'":'3Rw','3Rw2':'3Rw',
   '4Rw':'4Rw',"4Rw'":'4Rw','4Rw2':'4Rw',
+  '5Rw':'5Rw',"5Rw'":'5Rw','5Rw2':'5Rw',
   Lw:'Lw',"Lw'":'Lw',Lw2:'Lw',
   '3Lw':'3Lw',"3Lw'":'3Lw','3Lw2':'3Lw',
   F:'F',"F'":'F',F2:'F',
-  U2:'U2', x:'x', "x'":'x'
+  U2:'U2', x:'x', "x'":'x',
+  r:'r', "r'":'r', r2:'r',
+  '3r':'3r', "3r'":'3r', '3r2':'3r',
+  l:'l', "l'":'l', l2:'l',
+  '3l':'3l', "3l'":'3l', '3l2':'3l',
+  m:"m", "m'":"m", m2:"m"
 };
 
 /* ============================================================
@@ -367,18 +430,27 @@ const STRICT_KEYS = new Set([
 const STRICT_GROUPS = EDGE_GROUPS.filter(g => STRICT_KEYS.has(edgeKeyOf(SLOTS[g[0]].pos)));
 const FREE_GROUPS   = EDGE_GROUPS.filter(g => !STRICT_KEYS.has(edgeKeyOf(SLOTS[g[0]].pos)));
 const STRICT_SLOT_INDICES = STRICT_GROUPS.flat();
+// ホットパス最適化用: 入れ子配列よりフラットな型付き配列の方が高速なので、探索本体では
+// こちらを使う（STRICT_SLOT_INDICES / FREE_GROUPS 自体は他の用途で引き続き使用）。
+const STRICT_ARR = Int32Array.from(STRICT_SLOT_INDICES); // 25要素
+const FREE_ARR = Int32Array.from(FREE_GROUPS.flat());     // 7グループ×5=35要素
+const STRICT_COUNT = STRICT_ARR.length;
+const FREE_GROUP_COUNT = FREE_GROUPS.length; // 7
 
 // ゴール判定: FR/FL/DF/DR/DLは開始前と完全に同じであること。それ以外のエッジは
 // 「崩れていない」＝5枚のウィングが同一の色の組み合わせで揃っていることだけを確認する
 // （元の位置・元の色である必要はない）。
 function isGoalState(state){
-  for(const i of STRICT_SLOT_INDICES){
+  for(let k=0;k<STRICT_COUNT;k++){
+    const i = STRICT_ARR[k];
     if(state[i*2]!==SOLVED[i*2] || state[i*2+1]!==SOLVED[i*2+1]) return false;
   }
-  for(const group of FREE_GROUPS){
-    const c0 = state[group[0]*2], c1 = state[group[0]*2+1];
-    for(let k=1;k<group.length;k++){
-      const idx = group[k];
+  for(let g=0; g<FREE_GROUP_COUNT; g++){
+    const base = g*5;
+    const i0 = FREE_ARR[base];
+    const c0 = state[i0*2], c1 = state[i0*2+1];
+    for(let k=1;k<5;k++){
+      const idx = FREE_ARR[base+k];
       if(state[idx*2]!==c0 || state[idx*2+1]!==c1) return false;
     }
   }
@@ -388,17 +460,20 @@ function isGoalState(state){
 // 安全な下限値になるよう、各エッジが「自分の条件」を満たしていない数から見積もる。
 function weakHeuristic(state){
   let wrongCount = 0;
-  for(const i of STRICT_SLOT_INDICES){
+  for(let k=0;k<STRICT_COUNT;k++){
+    const i = STRICT_ARR[k];
     if(state[i*2]!==SOLVED[i*2] || state[i*2+1]!==SOLVED[i*2+1]) wrongCount++;
   }
-  for(const group of FREE_GROUPS){
-    const c0 = state[group[0]*2], c1 = state[group[0]*2+1];
+  for(let g=0; g<FREE_GROUP_COUNT; g++){
+    const base = g*5;
+    const i0 = FREE_ARR[base];
+    const c0 = state[i0*2], c1 = state[i0*2+1];
     let consistent = true;
-    for(let k=1;k<group.length;k++){
-      const idx = group[k];
+    for(let k=1;k<5;k++){
+      const idx = FREE_ARR[base+k];
       if(state[idx*2]!==c0 || state[idx*2+1]!==c1){ consistent=false; break; }
     }
-    if(!consistent) wrongCount += group.length;
+    if(!consistent) wrongCount += 5;
   }
   return Math.ceil(wrongCount/10);
 }
@@ -413,23 +488,28 @@ function weakHeuristic(state){
 const PATTERN_DB_DEPTH = 5;
 let PATTERN_DB = new Map();
 let patternDbReady = null;
+const PDB_POOL_SIZE = 8;
+const PDB_POOL = [];
+for(let i=0;i<PDB_POOL_SIZE;i++) PDB_POOL.push(new Uint8Array(120));
 
 async function buildPatternDB(depth){
   const db = new Map();
   db.set(hashState(SOLVED), 0);
-  let frontier = [{state:SOLVED, lastGroup:null}];
+  const allDescriptors = buildMoveDescriptors(BASE_MOVES);
+  let frontier = [{state:SOLVED, lastGroup:null, lastSliceCol:null}];
   let counter = 0;
   for(let d=1; d<=depth; d++){
     const next = [];
-    for(const {state, lastGroup} of frontier){
-      for(const token of BASE_MOVES){
-        const grp = MOVE_GROUP[token];
-        if(grp===lastGroup) continue;
-        const ns = applyMoveFast(state, token);
+    for(const {state, lastGroup, lastSliceCol} of frontier){
+      const candidates = allDescriptors.get(lastGroup);
+      for(const md of candidates){
+        if(md.sliceCol!==null && lastSliceCol!==null && Math.abs(md.sliceCol-lastSliceCol)===1) continue;
+        const ns = applyMoveFastInto(state, md.token, PDB_POOL[d % PDB_POOL_SIZE]);
         const h = hashState(ns);
         if(db.has(h)) continue;
+        const stored = ns.slice(); // フロンティアに残す分だけ複製（プールとは別に保持）
         db.set(h, d);
-        next.push({state:ns, lastGroup:grp});
+        next.push({state:stored, lastGroup:md.grp, lastSliceCol:md.sliceCol});
         counter++;
         if((counter & 0x3FFF)===0) await yieldToUI();
       }
@@ -439,51 +519,185 @@ async function buildPatternDB(depth){
   return db;
 }
 
+// IndexedDBによるパターンデータベースのキャッシュ。構築に数十秒かかるため、
+// 一度作ったら次回以降のページ読み込みでは再利用する（ブラウザに保存されるので
+// GitHub Pagesなど通常のWebページとして開いていれば有効）。
+const PDB_CACHE_VERSION = 'v1-depth' + PATTERN_DB_DEPTH + '-moves' + BASE_MOVES.length;
+function openPdbDb(){
+  return new Promise((resolve) => {
+    if(typeof indexedDB === 'undefined'){ resolve(null); return; }
+    const req = indexedDB.open('cubeSolverPdbCache', 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore('pdb'); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+  });
+}
+async function loadPdbFromCache(){
+  try{
+    const idb = await openPdbDb();
+    if(!idb) return null;
+    return await new Promise((resolve) => {
+      const tx = idb.transaction('pdb', 'readonly');
+      const req = tx.objectStore('pdb').get(PDB_CACHE_VERSION);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch(e){ return null; }
+}
+async function savePdbToCache(keyCodes, valuesArr){
+  try{
+    const idb = await openPdbDb();
+    if(!idb) return;
+    await new Promise((resolve) => {
+      const tx = idb.transaction('pdb', 'readwrite');
+      tx.objectStore('pdb').put({keyCodes:keyCodes, values:valuesArr}, PDB_CACHE_VERSION);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch(e){ /* 保存できなくても致命的ではないので無視 */ }
+}
+function serializePDB(db){
+  const n = db.size;
+  const keyCodes = new Uint16Array(n*20); // 巨大な文字列join()は非常に遅いため型付き配列で保持
+  const values = new Uint8Array(n);
+  let i = 0;
+  for(const [k,v] of db){
+    for(let j=0;j<20;j++) keyCodes[i*20+j] = k.charCodeAt(j);
+    values[i] = v;
+    i++;
+  }
+  return { keyCodes, values };
+}
+function deserializePDB(keyCodes, values){
+  const db = new Map();
+  const n = values.length;
+  for(let i=0;i<n;i++){
+    const k = String.fromCharCode.apply(null, keyCodes.subarray(i*20, i*20+20));
+    db.set(k, values[i]);
+  }
+  return db;
+}
+
 async function ensurePatternDB(){
   if(!patternDbReady){
-    patternDbReady = buildPatternDB(PATTERN_DB_DEPTH).then(db => { PATTERN_DB = db; });
+    patternDbReady = (async () => {
+      const cached = await loadPdbFromCache();
+      if(cached){
+        PATTERN_DB = deserializePDB(cached.keyCodes, cached.values);
+        return;
+      }
+      const db = await buildPatternDB(PATTERN_DB_DEPTH);
+      PATTERN_DB = db;
+      const { keyCodes, values } = serializePDB(db);
+      savePdbToCache(keyCodes, values); // 完了を待たずバックグラウンドで保存
+    })();
   }
   await patternDbReady;
 }
 
 function heuristic(state){
   const weak = weakHeuristic(state);
+  if(weak >= PATTERN_DB_DEPTH+1) return weak; // PDBの最大値は必ずこれ以下なので参照するだけ無駄
   const pdb = PATTERN_DB.get(hashState(state));
   if(pdb !== undefined) return Math.max(weak, pdb);
   return Math.max(weak, PATTERN_DB_DEPTH+1);
 }
 
 const TIMEOUT_SIGNAL = Symbol('timeout');
+const NODE_CAP_SIGNAL = Symbol('nodecap');
+const DEFAULT_MAX_NODES = 60000000; // 探索ノード数の安全上限のデフォルト値（メモリ枯渇によるクラッシュを防ぐため、時間切れとは別に設ける）
+
+// r, 3r, m, 3l, l は内側の1列だけを回す手（列番号: l=1, 3l=2, m=3, 3r=4, r=5）。
+// これらのうち「隣り合う列」を連続で単独操作するのは実際には不自然な手順になりがちなので、
+// 直前の手が単一列操作だった場合、その隣の列を単独操作することを禁止する（'・2のバリエーションも同じ列として扱う）。
+// Rw・3Rw・4Rw・Lw・3Lwのように複数列をまとめて回す手はこの制限の対象外（例外）。
+const SLICE_COLUMN = {
+  l:1, "l'":1, l2:1,
+  '3l':2, "3l'":2, '3l2':2,
+  m:3, "m'":3, m2:3,
+  '3r':4, "3r'":4, '3r2':4,
+  r:5, "r'":5, r2:5
+};
+
+// ホットパス最適化: 探索中に何百万回も呼ばれるループの中で、MOVE_GROUP/MOVE_FAMILY/
+// SLICE_COLUMNのプロパティ参照を毎回行うのではなく、探索開始時に1回だけ「使う手」の情報を
+// 解決しておく。また「直前と同じ系統の手を除外する」判定も、系統ごとに事前にフィルタ済みの
+// 配列を用意しておくことで、ループ内でのif分岐を減らす。
+function buildMoveDescriptors(moves){
+  const descriptors = moves.map(token => ({
+    token,
+    grp: MOVE_GROUP[token],
+    isX: MOVE_FAMILY[token]==='X',
+    hand: (MOVE_FAMILY[token]==='R'||MOVE_FAMILY[token]==='L') ? MOVE_FAMILY[token] : null,
+    sliceCol: SLICE_COLUMN[token] !== undefined ? SLICE_COLUMN[token] : null
+  }));
+  const byLastGroup = new Map();
+  const groups = new Set(descriptors.map(d=>d.grp));
+  byLastGroup.set(null, descriptors);
+  for(const g of groups){
+    byLastGroup.set(g, descriptors.filter(d=>d.grp!==g));
+  }
+  return byLastGroup;
+}
 
 // 深い再帰の全階層をasync/awaitにすると、JS関数呼び出しのオーバーヘッドが積み重なって
 // 極端に遅くなる（数百万回規模の再帰では致命的）。そのため内部は同期関数にして高速化し、
 // 時間切れの判定は例外(TIMEOUT_SIGNAL)をthrowしてスタックを一気に巻き戻す方式にする。
 // UIの応答性を保つためのyieldは、最上位（1手目を選ぶところ）でのみ行う。
-function idaDfsSync(ctx, state, g, threshold, path, lastGroup, lastHand, regrips){
-  const f = g + heuristic(state);
+//
+// x（全体回転）は手数としてカウントしない仕様のため、実際に適用した手の総数(rawG。
+// STATE_POOLのバッファ管理や再帰の安全上の深さ制限に使う)と、手数として数える数
+// (countedG。xを除いた数。探索の深さ上限=thresholdとの比較に使う)を分けて追跡する。
+//
+// 置換表(ctx.visited): 手の順番が違うだけで同じ局面に何度も到達することが多いため
+// （例: F2 U2 と U2 F2 は同じ結果になる）、一度「この局面・この状況からは
+// これより良い条件で探索済みで進展がなかった」と分かれば、以降は同じ枝を再探索しない。
+const TRANSPOSITION_CAP = 6000000; // 置換表のサイズ上限（メモリ保護）
+function idaDfsSync(ctx, state, rawG, countedG, threshold, path, lastGroup, lastHand, regrips, lastSliceCol){
+  const hash = hashState(state);
+  const weak = weakHeuristic(state);
+  let h;
+  if(weak >= PATTERN_DB_DEPTH+1){ h = weak; }
+  else{
+    const pdb = PATTERN_DB.get(hash);
+    h = pdb !== undefined ? Math.max(weak, pdb) : Math.max(weak, PATTERN_DB_DEPTH+1);
+  }
+  const f = countedG + h;
   if(f > threshold){ if(f < ctx.nextThreshold) ctx.nextThreshold = f; return; }
   if(isGoalState(state)){
     const key = path.join(' ');
-    if(!ctx.seen.has(key)){ ctx.seen.add(key); ctx.solutions.push({moves:[...path], regrips}); }
+    if(!ctx.seen.has(key)){ ctx.seen.add(key); ctx.solutions.push({moves:[...path], regrips, countedLength:countedG}); }
     return;
   }
   if(ctx.solutions.length >= ctx.maxSol*4) return;
+  if(rawG >= STATE_POOL_SIZE-1) return; // xの多用による際限のない再帰の深さを安全に打ち切る
+
+  const tkey = hash + '_' + lastGroup + '_' + lastSliceCol;
+  const prevVisit = ctx.visited.get(tkey);
+  if(prevVisit && prevVisit.cg <= countedG && prevVisit.rg <= regrips) return; // 同等以上の条件で探索済み
+  if(ctx.visited.size < TRANSPOSITION_CAP){
+    if(!prevVisit) ctx.visited.set(tkey, {cg:countedG, rg:regrips});
+    else ctx.visited.set(tkey, {cg:Math.min(prevVisit.cg,countedG), rg:Math.min(prevVisit.rg,regrips)});
+  }
 
   ctx.nodeCounter++;
-  if((ctx.nodeCounter & 0xFFF) === 0 && Date.now() > ctx.deadline){ throw TIMEOUT_SIGNAL; }
+  if((ctx.nodeCounter & 0xFFF) === 0){
+    if(Date.now() > ctx.deadline) throw TIMEOUT_SIGNAL;
+    if(ctx.nodeCounter > ctx.maxNodes) throw NODE_CAP_SIGNAL; // 時間切れより先にメモリを使い果たすのを防ぐ安全上限
+  }
 
-  for(const token of ctx.moves){
-    const grp = MOVE_GROUP[token];
-    if(grp===lastGroup) continue;
-    const fam = MOVE_FAMILY[token];
+  const candidates = ctx.movesByLastGroup.get(lastGroup);
+  for(let i=0; i<candidates.length; i++){
+    const md = candidates[i];
+    if(md.sliceCol!==null && lastSliceCol!==null && Math.abs(md.sliceCol-lastSliceCol)===1) continue;
     let addRegrip=0;
-    if(fam==='X') addRegrip=1; else if((fam==='R'||fam==='L') && lastHand && fam!==lastHand) addRegrip=1;
+    if(md.isX) addRegrip=1; else if(md.hand && lastHand && md.hand!==lastHand) addRegrip=1;
     const newRegrips = regrips+addRegrip;
     if(newRegrips>ctx.maxRegrip) continue;
-    const newHand = (fam==='R'||fam==='L') ? fam : lastHand;
-    const ns = applyMoveFast(state, token);
-    path.push(token);
-    idaDfsSync(ctx, ns, g+1, threshold, path, grp, newHand, newRegrips);
+    const newHand = md.hand || lastHand;
+    const ns = applyMoveFastInto(state, md.token, STATE_POOL[rawG]);
+    path.push(md.token);
+    idaDfsSync(ctx, ns, rawG+1, md.isX ? countedG : countedG+1, threshold, path, md.grp, newHand, newRegrips, md.sliceCol);
     path.pop();
     if(ctx.solutions.length >= ctx.maxSol*4) return;
   }
@@ -492,56 +706,63 @@ function idaDfsSync(ctx, state, g, threshold, path, lastGroup, lastHand, regrips
 // 最上位（1手目）だけは非同期ループにして、各枝の合間にUIへ制御を返す。
 async function idaDfsTop(ctx, state, threshold){
   const path = [];
-  const total = ctx.moves.length;
+  const candidates = ctx.movesByLastGroup.get(null);
+  const total = candidates.length;
   let idx = 0;
-  for(const token of ctx.moves){
+  for(const md of candidates){
     idx++;
-    const grp = MOVE_GROUP[token];
-    const fam = MOVE_FAMILY[token];
-    let addRegrip = (fam==='X') ? 1 : 0;
+    let addRegrip = md.isX ? 1 : 0;
     if(addRegrip>ctx.maxRegrip) continue;
-    const newHand = (fam==='R'||fam==='L') ? fam : null;
-    const ns = applyMoveFast(state, token);
-    path.push(token);
-    if(ctx.onProgress) ctx.onProgress({threshold, currentMove:token, moveIndex:idx, moveTotal:total, nodeCounter:ctx.nodeCounter, solutionsFound:ctx.solutions.length, minDepth:ctx.minDepth});
+    const newHand = md.hand || null;
+    const ns = applyMoveFastInto(state, md.token, STATE_POOL[0]);
+    path.push(md.token);
+    if(ctx.onProgress) ctx.onProgress({threshold, currentMove:md.token, moveIndex:idx, moveTotal:total, nodeCounter:ctx.nodeCounter, solutionsFound:ctx.solutions.length, minDepth:ctx.minDepth});
     try{
-      idaDfsSync(ctx, ns, 1, threshold, path, grp, newHand, addRegrip);
+      idaDfsSync(ctx, ns, 1, md.isX ? 0 : 1, threshold, path, md.grp, newHand, addRegrip, md.sliceCol);
     } catch(e){
       if(e===TIMEOUT_SIGNAL){ ctx.timedOut = true; return; }
+      if(e===NODE_CAP_SIGNAL){ ctx.nodeCapReached = true; return; }
       throw e;
     }
     path.pop();
     await yieldToUI();
-    if(ctx.timedOut || Date.now() > ctx.deadline){ ctx.timedOut = true; return; }
+    if(ctx.timedOut || ctx.nodeCapReached) return;
+    if(Date.now() > ctx.deadline){ ctx.timedOut = true; return; }
     if(ctx.solutions.length >= ctx.maxSol*4) return;
   }
 }
 
 // 最小手数を自動的に見つけたうえで、そこから指定した追加手数まで深く探索する。
 // メモリはほぼ一定（再帰の深さ分のみ）なので、手数の上限を大きくしてもクラッシュしない。
-async function findMinDepthThenSearch(scrambled, maxRegrip, maxSol, extraDepth, timeBudgetMs, hardDepthCap, moves, onProgress){
+async function findMinDepthThenSearch(scrambled, maxRegrip, maxSol, extraDepth, timeBudgetMs, hardDepthCap, moves, onProgress, maxNodes){
+  await ensurePatternDB(); // 初回のみ時間がかかるが、探索自体の時間予算には含めない
   const deadline = Date.now() + timeBudgetMs;
-  await ensurePatternDB();
+  const activeMoves = moves || BASE_MOVES;
   const ctx = {
-    solutions: [], seen: new Set(), maxRegrip, maxSol, moves: moves || BASE_MOVES,
-    deadline, nodeCounter: 0, timedOut: false, nextThreshold: Infinity, onProgress, minDepth: null
+    solutions: [], seen: new Set(), maxRegrip, maxSol, moves: activeMoves,
+    movesByLastGroup: buildMoveDescriptors(activeMoves), visited: new Map(),
+    deadline, nodeCounter: 0, maxNodes: maxNodes || DEFAULT_MAX_NODES,
+    timedOut: false, nodeCapReached: false, nextThreshold: Infinity, onProgress, minDepth: null
   };
 
   let threshold = heuristic(scrambled);
   let minDepth = null;
 
   while(true){
-    if(Date.now() > deadline){ return {solutions:ctx.solutions, minDepth, incomplete: minDepth===null, timedOut:true, triedUpTo:threshold-1}; }
+    if(Date.now() > deadline){ return {solutions:ctx.solutions, minDepth, incomplete: minDepth===null, timedOut:true, nodeCapReached:false, triedUpTo:threshold-1}; }
     if(threshold > hardDepthCap){
-      return {solutions:ctx.solutions, minDepth, incomplete: minDepth===null, timedOut:false, exceededHardCap:true, triedUpTo:hardDepthCap};
+      return {solutions:ctx.solutions, minDepth, incomplete: minDepth===null, timedOut:false, nodeCapReached:false, exceededHardCap:true, triedUpTo:hardDepthCap};
     }
     ctx.nextThreshold = Infinity;
+    ctx.visited.clear(); // 置換表はしきい値ごとにリセット（前回不成立でも次のしきい値では成立しうるため）
     if(onProgress) onProgress({threshold, currentMove:null, moveIndex:0, moveTotal:ctx.moves.length, nodeCounter:ctx.nodeCounter, solutionsFound:ctx.solutions.length, minDepth, phase:'start'});
     await idaDfsTop(ctx, scrambled, threshold);
-    if(ctx.timedOut){ return {solutions:ctx.solutions, minDepth, incomplete: minDepth===null, timedOut:true, triedUpTo:threshold}; }
+    if(ctx.timedOut || ctx.nodeCapReached){
+      return {solutions:ctx.solutions, minDepth, incomplete: minDepth===null, timedOut:ctx.timedOut, nodeCapReached:ctx.nodeCapReached, triedUpTo:threshold};
+    }
 
     if(minDepth===null && ctx.solutions.length>0){
-      minDepth = Math.min(...ctx.solutions.map(s=>s.moves.length));
+      minDepth = Math.min(...ctx.solutions.map(s=>s.countedLength));
       ctx.minDepth = minDepth;
     }
     if(minDepth!==null && threshold >= minDepth+extraDepth) break;
@@ -551,7 +772,7 @@ async function findMinDepthThenSearch(scrambled, maxRegrip, maxSol, extraDepth, 
     await yieldToUI();
   }
 
-  ctx.solutions.sort((a,b)=> a.moves.length-b.moves.length || a.regrips-b.regrips);
+  ctx.solutions.sort((a,b)=> a.countedLength-b.countedLength || a.regrips-b.regrips);
   return {
     solutions: ctx.solutions.slice(0,maxSol),
     minDepth, targetDepth: minDepth!==null ? minDepth+extraDepth : null,
@@ -602,6 +823,40 @@ function loadSolved(){
 document.getElementById('btnSolved').addEventListener('click', loadSolved);
 loadSolved();
 
+// 回転記号（家族）ごとのチェックボックスを生成
+const FAMILY_LIST = ['U2','x','R','Rw','3Rw','4Rw','5Rw','Lw','3Lw','F','r','3r','m','l','3l'];
+function famId(group){ return 'fam_' + group.replace("'", 'p'); }
+(function buildFamilyGrid(){
+  const grid = document.getElementById('familyGrid');
+  for(const group of FAMILY_LIST){
+    const label = document.createElement('label');
+    label.className = 'famItem';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = true; cb.id = famId(group);
+    const span = document.createElement('span');
+    span.textContent = group;
+    label.appendChild(cb); label.appendChild(span);
+    grid.appendChild(label);
+  }
+})();
+document.getElementById('btnFamAll').addEventListener('click', ()=>{
+  for(const g of FAMILY_LIST) document.getElementById(famId(g)).checked = true;
+});
+document.getElementById('btnFamNone').addEventListener('click', ()=>{
+  for(const g of FAMILY_LIST) document.getElementById(famId(g)).checked = false;
+});
+
+function getActiveMoves(){
+  const enabledGroups = new Set(FAMILY_LIST.filter(g => document.getElementById(famId(g)).checked));
+  const restrictF2 = document.getElementById('restrictF2').checked;
+  return BASE_MOVES.filter(token => {
+    const grp = MOVE_GROUP[token];
+    if(!enabledGroups.has(grp)) return false;
+    if(grp==='F' && restrictF2 && (token==='F' || token==="F'")) return false;
+    return true;
+  });
+}
+
 function readNetToColors(){
   const ub={B:[],U:[]}, uf={U:[],F:[]};
   for(let i=0;i<5;i++){
@@ -649,7 +904,7 @@ function renderSolutions(result){
     const div=document.createElement('div'); div.className='sol';
     const moves=document.createElement('div'); moves.className='moves'; moves.textContent=sol.moves.join(' ');
     const meta=document.createElement('div'); meta.className='meta';
-    meta.innerHTML=`<span class="badge">${sol.moves.length}手</span><span class="badge">持ち替え ${sol.regrips}回</span>`;
+    meta.innerHTML=`<span class="badge">${sol.countedLength}手</span><span class="badge">持ち替え ${sol.regrips}回</span>`;
     div.appendChild(moves); div.appendChild(meta); list.appendChild(div);
   }
 }
@@ -659,13 +914,18 @@ document.getElementById('btnSearch').addEventListener('click', async ()=>{
   const maxRegrip = Math.max(0, parseInt(document.getElementById('maxRegrip').value,10)||4);
   const maxSol = Math.max(1, parseInt(document.getElementById('maxSol').value,10)||6);
   const timeBudgetMin = Math.max(1, Math.min(120, parseInt(document.getElementById('timeBudgetMin').value,10)||30));
-  const restrictUF = document.getElementById('restrictUF').checked;
-  const activeMoves = restrictUF ? RESTRICTED_MOVES : BASE_MOVES;
+  const maxNodes = Math.max(1000000, Math.min(500000000, parseInt(document.getElementById('maxNodes').value,10)||60000000));
+  const activeMoves = getActiveMoves();
   const HARD_DEPTH_CAP = 30;
+
+  if(activeMoves.length===0){
+    setStatus('使用する回転記号が1つも選択されていません。少なくとも1つは選択してください。', 'err');
+    return;
+  }
 
   const btn=document.getElementById('btnSearch');
   btn.disabled=true;
-  setStatus('準備中です（初回は下限値テーブルの構築に数秒かかります）…');
+  setStatus('準備中です（初回のみ下限値テーブルの構築に1分弱かかります。一度構築すればブラウザに保存され、次回以降は一瞬で終わります）…');
   document.getElementById('solList').innerHTML='<div class="note">探索中…</div>';
   searchStartTime = performance.now();
   showProgress({threshold:'-', currentMove:null, moveIndex:0, moveTotal:0, nodeCounter:0, minDepth:null});
@@ -683,7 +943,7 @@ document.getElementById('btnSearch').addEventListener('click', async ()=>{
 
     const t0=performance.now();
     const timeBudgetMs = timeBudgetMin * 60000;
-    const result = await findMinDepthThenSearch(initState, maxRegrip, maxSol, extraDepth, timeBudgetMs, HARD_DEPTH_CAP, activeMoves, showProgress);
+    const result = await findMinDepthThenSearch(initState, maxRegrip, maxSol, extraDepth, timeBudgetMs, HARD_DEPTH_CAP, activeMoves, showProgress, maxNodes);
     const t1=performance.now();
 
     hideProgress();
@@ -691,6 +951,8 @@ document.getElementById('btnSearch').addEventListener('click', async ()=>{
 
     if(result.solutions.length>0){
       setStatus(`最小手数 ${result.minDepth}手 を発見。${result.minDepth}〜${result.targetDepth}手の範囲で解 ${result.solutions.length} 件（${((t1-t0)/1000).toFixed(1)}秒）`, 'ok');
+    } else if(result.nodeCapReached){
+      setStatus(`${result.triedUpTo}手を探索中に、探索ノード数の上限に達したため打ち切りました（設定した時間の上限には達していません）。ノード数の上限を増やすか、有効にする回転記号を減らしてお試しください（上限を上げすぎるとメモリ不足でクラッシュする場合があります）。`, 'warn');
     } else if(result.incomplete){
       setStatus(`${result.triedUpTo}手まで試しましたが、時間の上限に達し探索を完了できませんでした。探索時間の上限を増やすか、持ち替え回数の上限を増やしてお試しください。`, 'warn');
     } else if(result.exceededHardCap){
