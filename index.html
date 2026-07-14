@@ -54,10 +54,12 @@
   .checkrow{display:flex;align-items:center;gap:8px;margin:14px 0 4px;cursor:pointer;padding:4px 0;}
   .checkrow input[type=checkbox]{width:20px;height:20px;margin:0;flex:0 0 auto;}
   .checkrow span{font-size:13px;color:#444;}
-  .familyGrid{display:grid;grid-template-columns:repeat(auto-fill, minmax(76px,1fr));gap:6px;margin-top:6px;}
-  .famItem{display:flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:7px;padding:7px 8px;cursor:pointer;background:#fafbfc;}
-  .famItem input[type=checkbox]{width:18px;height:18px;margin:0;flex:0 0 auto;}
-  .famItem span{font-family:"SFMono-Regular",Consolas,monospace;font-size:13px;font-weight:600;color:#333;}
+  .familyGrid{display:grid;grid-template-columns:repeat(auto-fill, minmax(112px,1fr));gap:6px;margin-top:6px;}
+  .famItem{display:flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:7px;padding:7px 8px;background:#fafbfc;}
+  .famItem input[type=checkbox]{width:18px;height:18px;margin:0;flex:0 0 auto;cursor:pointer;}
+  .famItem span{font-family:"SFMono-Regular",Consolas,monospace;font-size:13px;font-weight:600;color:#333;flex:1;cursor:pointer;}
+  .famItem input[type=number]{width:38px;padding:2px 3px;border:1px solid var(--line);border-radius:5px;font-size:11px;text-align:center;flex:0 0 auto;}
+  .famItem input[type=number]::placeholder{color:#c7ccd3;}
 
   @media (max-width: 720px){
     body{padding:12px;}
@@ -97,7 +99,7 @@
     <div class="field"><label style="margin:0">最大持ち替え回数</label><input type="number" id="maxRegrip" value="4" min="0" max="10"></div>
     <div class="field"><label style="margin:0">表示する解の数</label><input type="number" id="maxSol" value="6" min="1" max="30"></div>
     <div class="field"><label style="margin:0">探索時間の上限（分）</label><input type="number" id="timeBudgetMin" value="30" min="1" max="120"></div>
-    <div class="field"><label style="margin:0">探索ノード数の上限</label><input type="number" id="maxNodes" value="60000000" min="1000000" max="500000000" step="1000000"></div>
+    <div class="field"><label style="margin:0">探索ノード数の上限</label><input type="number" id="maxNodes" value="10000000" min="1000000" max="1000000000" step="1000000"></div>
     <label style="margin:12px 0 4px;">使用する回転記号</label>
     <div class="familyGrid" id="familyGrid"></div>
     <div class="presetBtns" style="margin-top:8px;">
@@ -120,7 +122,7 @@
         ・探索は反復深化探索（IDA*）と合流探索（meet-in-the-middle）の組み合わせです。「U層4エッジの中身が入れ替わった/反転した完成形」をゴール集合とし、そこから逆向きに数手分の局面を事前に展開してテーブル化。前方探索がテーブル内の局面に到達した時点で残りの手順をつなげて解を完成させます。使用する回転記号が少ないほどテーブルが深くなり（例: 9記号なら7手分）、その分だけ前方探索の負担が減って深い解に届きます。<br>
         ・この方式の性質上、解の終端が「U層エッジの入れ替え/反転」以外の特殊な形（DB・BL・BRエッジが入れ替わる等）になる解は発見できない場合があります。また表示される「最小手数」は選択した回転記号の範囲内での最小です。<br>
         ・持ち替え回数は「R系⇔L系の手の切り替え」および「xの実行」をそれぞれ1回とカウントする簡易的な近似です。U2・Fは持ち替えなしとみなします。実際の持ち方の感覚とは多少異なる場合があります。<br>
-        ・ゴール条件：FR・FL・DF・DR・DLのエッジは手順の前後で完全に同じ状態であることを要求します。それ以外のエッジ（崩れたラスト2エッジを含む）は、5枚のウィングが同じ色の組み合わせで揃っていれば良く、必ずしも元の位置・元の色に戻っている必要はありません（手順の結果、他の揃っているエッジ同士が入れ替わっていても構いません）。<br>
+        ・ゴール条件：FR・FL・DF・DR・DLのエッジは手順の前後で完全に同じ状態であることを要求します。それ以外のエッジ（崩れたラスト2エッジを含む）は、5枚のウィングが同じ色の組み合わせで揃っていれば良く、必ずしも元の位置・元の色に戻っている必要はありません（手順の結果、他の揃っているエッジ同士が入れ替わっていても構いません）。さらに、<b>センター150枚すべての色が手順の前後で変わらないこと</b>も条件として検査しています。<br>
         ・探索の高速化に使っている下限値の一部は「完全に揃った状態までの距離」を基にしているため、ごく稀に理論上の絶対最小手数より1〜2手長い手順を「最小手数」として報告する可能性があります。見つかる手順自体は必ず上記の条件を満たします。
       </div>
     </details>
@@ -275,6 +277,67 @@ MOVE_TRANSFORM["3l'"] = composeTransform(MOVE_TRANSFORM['Lw'],  MOVE_TRANSFORM["
 for(const base of ['r','3r','m','l','3l']){
   MOVE_TRANSFORM[base+'2'] = buildDoubleTransform(MOVE_TRANSFORM[base]);
 }
+
+/* ---- センター（各面の内側5×5=計150枚） ----
+   内側の列を回す手はセンターも動かすため、ウィングと同様に位置と色を追跡する。
+   センターは面が1つだけなので反転(flip)は存在せず、移動元インデックスのみで表せる。 */
+const CENTER_SLOTS = (() => {
+  const arr = [];
+  for(const axis of AXES){
+    for(const va of [0,6]){
+      const others = AXES.filter(a=>a!==axis);
+      for(let v1=1; v1<=5; v1++) for(let v2=1; v2<=5; v2++){
+        const pos = {x:0,y:0,z:0};
+        pos[axis]=va; pos[others[0]]=v1; pos[others[1]]=v2;
+        arr.push({pos, face: FACE_OF[axis][va]});
+      }
+    }
+  }
+  return arr; // 150個
+})();
+const CENTER_INDEX = new Map(CENTER_SLOTS.map((c,i)=>[posKey(c.pos), i]));
+const STATE_LEN = 270; // ウィング60枚×2色(120) + センター150枚(150)
+
+function buildCenterTransform(kind, pred, dir){
+  const tr = new Int16Array(150);
+  for(let i=0;i<150;i++) tr[i]=i;
+  for(let i=0;i<150;i++){
+    const c = CENTER_SLOTS[i];
+    let affected, newPos;
+    if(kind==='y180'){ affected = c.pos.y===6; if(affected) newPos = rotY180(c.pos); }
+    else if(kind==='x'){ affected = pred(c.pos.x); if(affected) newPos = rotX(c.pos, dir); }
+    else if(kind==='z'){ affected = pred(c.pos.z); if(affected) newPos = rotZ(c.pos, dir); }
+    if(!affected) continue;
+    tr[CENTER_INDEX.get(posKey(newPos))] = i;
+  }
+  return tr;
+}
+function composeCenterTransform(c1, c2){
+  const out = new Int16Array(150);
+  for(let d=0; d<150; d++) out[d] = c1[c2[d]];
+  return out;
+}
+const CENTER_TRANSFORM = {};
+for(const token in MOVE_DEFS){
+  const d = MOVE_DEFS[token];
+  CENTER_TRANSFORM[token] = buildCenterTransform(d.kind, d.pred, d.dir);
+}
+for(const base of DOUBLE_SOURCES){
+  CENTER_TRANSFORM[base+'2'] = composeCenterTransform(CENTER_TRANSFORM[base], CENTER_TRANSFORM[base]);
+}
+CENTER_TRANSFORM['r']   = composeCenterTransform(CENTER_TRANSFORM['Rw'],  CENTER_TRANSFORM["R'"]);
+CENTER_TRANSFORM["r'"]  = composeCenterTransform(CENTER_TRANSFORM['R'],   CENTER_TRANSFORM["Rw'"]);
+CENTER_TRANSFORM['3r']  = composeCenterTransform(CENTER_TRANSFORM['3Rw'], CENTER_TRANSFORM["Rw'"]);
+CENTER_TRANSFORM["3r'"] = composeCenterTransform(CENTER_TRANSFORM['Rw'],  CENTER_TRANSFORM["3Rw'"]);
+CENTER_TRANSFORM["m"]   = composeCenterTransform(CENTER_TRANSFORM['3Rw'], CENTER_TRANSFORM["4Rw'"]);
+CENTER_TRANSFORM["m'"]  = composeCenterTransform(CENTER_TRANSFORM['4Rw'], CENTER_TRANSFORM["3Rw'"]);
+CENTER_TRANSFORM['l']   = composeCenterTransform(CENTER_TRANSFORM['Lw'],  CENTER_TRANSFORM["L'"]);
+CENTER_TRANSFORM["l'"]  = composeCenterTransform(CENTER_TRANSFORM['L'],   CENTER_TRANSFORM["Lw'"]);
+CENTER_TRANSFORM['3l']  = composeCenterTransform(CENTER_TRANSFORM['3Lw'], CENTER_TRANSFORM["Lw'"]);
+CENTER_TRANSFORM["3l'"] = composeCenterTransform(CENTER_TRANSFORM['Lw'],  CENTER_TRANSFORM["3Lw'"]);
+for(const base of ['r','3r','m','l','3l']){
+  CENTER_TRANSFORM[base+'2'] = composeCenterTransform(CENTER_TRANSFORM[base], CENTER_TRANSFORM[base]);
+}
 // L, L' 自体は r'/3l を組み立てるための内部部品としてのみ使用し、単独の手としては使わない。
 const HIDDEN_TOKENS = new Set(['L',"L'"]);
 
@@ -296,12 +359,14 @@ const MOVE_FAMILY = {U2:'U',R:'R',"R'":'R',R2:'R',Rw:'R',"Rw'":'R',Rw2:'R','3Rw'
 
 function applyMoveFast(state, token){
   const tr = MOVE_TRANSFORM[token];
-  const out = new Uint8Array(120);
+  const ctr = CENTER_TRANSFORM[token];
+  const out = new Uint8Array(STATE_LEN);
   for(let d=0; d<60; d++){
     const {src, flip} = tr[d];
     if(!flip){ out[d*2]=state[src*2]; out[d*2+1]=state[src*2+1]; }
     else { out[d*2]=state[src*2+1]; out[d*2+1]=state[src*2]; }
   }
+  for(let d=0; d<150; d++) out[120+d] = state[120+ctr[d]];
   return out;
 }
 // applyMoveFastと同じ計算だが、新しい配列を確保せず渡されたバッファに書き込む。
@@ -310,18 +375,20 @@ function applyMoveFast(state, token){
 // バッファ（STATE_POOL）を用意し、これを使って確保回数をゼロに近づける。
 function applyMoveFastInto(state, token, out){
   const tr = MOVE_TRANSFORM[token];
+  const ctr = CENTER_TRANSFORM[token];
   for(let d=0; d<60; d++){
     const {src, flip} = tr[d];
     if(!flip){ out[d*2]=state[src*2]; out[d*2+1]=state[src*2+1]; }
     else { out[d*2]=state[src*2+1]; out[d*2+1]=state[src*2]; }
   }
+  for(let d=0; d<150; d++) out[120+d] = state[120+ctr[d]];
   return out;
 }
 const STATE_POOL_SIZE = 80; // xは手数にカウントしないため、実際の再帰の深さは手数上限(最大30)より大きくなりうる
 const STATE_POOL = [];
-for(let i=0;i<STATE_POOL_SIZE;i++) STATE_POOL.push(new Uint8Array(120));
+for(let i=0;i<STATE_POOL_SIZE;i++) STATE_POOL.push(new Uint8Array(STATE_LEN));
 // 各要素は0-5の6値。6要素を6進数として1文字(0-46655)にまとめることで
-// キー文字列の長さを120文字→20文字に圧縮し、Mapのメモリ使用量を大きく削減する。
+// キー文字列の長さを270文字→45文字に圧縮し、Mapのメモリ使用量を大きく削減する。
 // String.fromCharCodeの呼び出しコストを避けるため、全46656文字を事前計算しておく。
 const HASH_CHARS = (() => {
   const arr = new Array(46656);
@@ -330,19 +397,25 @@ const HASH_CHARS = (() => {
 })();
 function hashState(state){
   let s='';
-  for(let i=0;i<120;i+=6){
+  for(let i=0;i<STATE_LEN;i+=6){
     s += HASH_CHARS[state[i] + state[i+1]*6 + state[i+2]*36 + state[i+3]*216 + state[i+4]*1296 + state[i+5]*7776];
   }
   return s;
 }
 function isSolvedFast(state){
-  for(let i=0;i<120;i++) if(state[i]!==SOLVED[i]) return false;
+  for(let i=0;i<STATE_LEN;i++) if(state[i]!==SOLVED[i]) return false;
+  return true;
+}
+// センターが全て元の色のままか（手順の前後でセンターの見た目が変わらないことの判定）
+function centersMatch(state){
+  for(let i=120;i<STATE_LEN;i++) if(state[i]!==SOLVED[i]) return false;
   return true;
 }
 const FACE_COLOR = {U:0,D:1,F:2,B:3,R:4,L:5};
 function genSolvedArray(){
-  const arr = new Uint8Array(120);
+  const arr = new Uint8Array(STATE_LEN);
   for(let i=0;i<60;i++){ arr[i*2]=FACE_COLOR[SLOTS[i].faces[0]]; arr[i*2+1]=FACE_COLOR[SLOTS[i].faces[1]]; }
+  for(let i=0;i<150;i++){ arr[120+i]=FACE_COLOR[CENTER_SLOTS[i].face]; }
   return arr;
 }
 const SOLVED = genSolvedArray();
@@ -508,7 +581,7 @@ function isGoalState(state){
       if(state[idx*2]!==c0 || state[idx*2+1]!==c1) return false;
     }
   }
-  return true;
+  return centersMatch(state); // センターの色も手順の前後で変わらないこと
 }
 // 新しいゴール条件（FR/FL/DF/DR/DLは厳密一致、それ以外は「崩れていなければ良い」）に対して
 // 安全な下限値になるよう、各エッジが「自分の条件」を満たしていない数から見積もる。
@@ -534,7 +607,7 @@ function weakHeuristic(state){
 
 const TIMEOUT_SIGNAL = Symbol('timeout');
 const NODE_CAP_SIGNAL = Symbol('nodecap');
-const DEFAULT_MAX_NODES = 60000000; // 探索ノード数の安全上限のデフォルト値（メモリ枯渇によるクラッシュを防ぐため、時間切れとは別に設ける）
+const DEFAULT_MAX_NODES = 10000000; // 探索ノード数の安全上限のデフォルト値（メモリ枯渇によるクラッシュを防ぐため、時間切れとは別に設ける）
 
 // r, 3r, m, 3l, l は内側の1列だけを回す手（列番号: l=1, 3l=2, m=3, 3r=4, r=5）。
 // これらのうち「隣り合う列」を連続で単独操作するのは実際には不自然な手順になりがちなので、
@@ -552,6 +625,11 @@ const SLICE_COLUMN = {
 // SLICE_COLUMNのプロパティ参照を毎回行うのではなく、探索開始時に1回だけ「使う手」の情報を
 // 解決しておく。また「直前と同じ系統の手を除外する」判定も、系統ごとに事前にフィルタ済みの
 // 配列を用意しておくことで、ループ内でのif分岐を減らす。
+// x(全体回転)はR軸まわりの回転なので、同じR軸まわりの手(R/Rw/Lw/r/l/m系)とは可換。
+// そのため「xの直後にR軸系の手」は「R軸系の手を先に打ってからx」と常に等価であり、
+// x M x' = M のような無駄な持ち替えを生む。正規形として x の直後はU2/F系のみ許可する。
+const R_AXIS_GROUPS = new Set(['R','Rw','3Rw','4Rw','5Rw','Lw','3Lw','r','3r','m','l','3l']);
+
 function buildMoveDescriptors(moves){
   const grpIdxMap = new Map();
   const descriptors = moves.map(token => {
@@ -562,6 +640,7 @@ function buildMoveDescriptors(moves){
       grp,
       grpIdx: grpIdxMap.get(grp),
       isX: MOVE_FAMILY[token]==='X',
+      rAxis: R_AXIS_GROUPS.has(grp),
       hand: (MOVE_FAMILY[token]==='R'||MOVE_FAMILY[token]==='L') ? MOVE_FAMILY[token] : null,
       sliceCol: SLICE_COLUMN[token] !== undefined ? SLICE_COLUMN[token] : null
     };
@@ -621,7 +700,7 @@ async function buildMeetTable(moves){
   let counter = 0;
   let fullDepth = 0; // 上限に達することなく完全に展開しきった深さ(終了条件の保証に使うのはこちら)
   let curDepth = 0;
-  const buf = new Uint8Array(120);
+  const buf = new Uint8Array(STATE_LEN);
   while(frontier.length > 0 && table.size < MEET_ENTRY_CAP){
     const next = [];
     curDepth++;
@@ -636,6 +715,7 @@ async function buildMeetTable(moves){
         if(firstGrp !== null){
           if(md.grp === firstGrp) continue;
           if(md.sliceCol!==null && firstCol!==null && Math.abs(md.sliceCol-firstCol)===1) continue;
+          if(md.grp === 'x' && R_AXIS_GROUPS.has(firstGrp)) continue; // xの直後のR軸系は正規形から除外
         }
         applyMoveFastInto(state, INV[md.token], buf);
         const h = hashState(buf);
@@ -672,13 +752,23 @@ async function buildMeetTable(moves){
 
 // 手順全体（前方パス+合流サフィックス）が全ルールを満たすか最終検証する。
 // 合流点をまたぐ連続禁止・スライス隣接・持ち替え上限・カウント手数を一括で再計算する。
-function validateFullSequence(moves, maxRegrip){
+function validateFullSequence(moves, maxRegrip, maxUsagePerFamily){
   let lastGroup=null, lastHand=null, lastSliceCol=null, regrips=0, counted=0;
+  const usage = maxUsagePerFamily && maxUsagePerFamily.size ? new Map() : null;
   for(const token of moves){
     const grp = MOVE_GROUP[token];
     if(grp===lastGroup) return null;
+    if(lastGroup==='x' && R_AXIS_GROUPS.has(grp)) return null; // xの直後のR軸系は正規形から除外
     const col = SLICE_COLUMN[token] !== undefined ? SLICE_COLUMN[token] : null;
     if(col!==null && lastSliceCol!==null && Math.abs(col-lastSliceCol)===1) return null;
+    if(usage){
+      const lim = maxUsagePerFamily.get(grp);
+      if(lim !== undefined){
+        const used = (usage.get(grp)||0) + 1;
+        if(used > lim) return null;
+        usage.set(grp, used);
+      }
+    }
     const fam = MOVE_FAMILY[token];
     if(fam==='X') regrips++;
     else if((fam==='R'||fam==='L') && lastHand && fam!==lastHand) regrips++;
@@ -706,8 +796,9 @@ function validateFullSequence(moves, maxRegrip){
 const TRANSPOSITION_CAP = 6000000; // 置換表のサイズ上限（メモリ保護）
 function idaDfsSync(ctx, state, rawG, countedG, threshold, path, lastGroup, lastHand, regrips, lastSliceCol, lastGrpIdx){
   const weak = weakHeuristic(state);
-  // weakHeuristic===0 ⟺ isGoalState (両者は同じ条件を検査しているため)。個別のスキャンを省略。
-  if(weak === 0){
+  // weakHeuristic===0 はエッジ条件の達成。さらにセンターも元通りであればゴール。
+  // エッジだけ揃っていてセンターが崩れている場合はゴールではなく、探索を継続する。
+  if(weak === 0 && centersMatch(state)){
     const key = path.join(' ');
     if(!ctx.seen.has(key)){ ctx.seen.add(key); ctx.solutions.push({moves:[...path], regrips, countedLength:countedG}); }
     return;
@@ -728,7 +819,7 @@ function idaDfsSync(ctx, state, rawG, countedG, threshold, path, lastGroup, last
       const full = path.concat(suffix);
       const key = full.join(' ');
       if(!ctx.seen.has(key)){
-        const v = validateFullSequence(full, ctx.maxRegrip);
+        const v = validateFullSequence(full, ctx.maxRegrip, ctx.maxUsagePerFamily);
         if(v){
           ctx.seen.add(key);
           ctx.solutions.push({moves:full, regrips:v.regrips, countedLength:v.counted});
@@ -748,14 +839,18 @@ function idaDfsSync(ctx, state, rawG, countedG, threshold, path, lastGroup, last
   if(rawG >= STATE_POOL_SIZE-1) return; // xの多用による際限のない再帰の深さを安全に打ち切る
 
   // 置換表: キーは局面ハッシュ+状況(直前手グループ/スライス列)を1文字に詰めたもの。値はcg*16+rgのパック整数。
-  const tkey = hashState(state) + HASH_CHARS[lastGrpIdx*8 + (lastSliceCol===null ? 6 : lastSliceCol)];
-  const prevVisit = ctx.visited.get(tkey);
-  if(prevVisit !== undefined){
-    const pcg = prevVisit >> 4, prg = prevVisit & 15;
-    if(pcg <= countedG && prg <= regrips) return; // 同等以上の条件で探索済み
-    ctx.visited.set(tkey, (Math.min(pcg,countedG)<<4) | Math.min(prg,regrips));
-  } else if(ctx.visited.size < TRANSPOSITION_CAP){
-    ctx.visited.set(tkey, (countedG<<4) | regrips);
+  // 使用回数上限が設定されている場合、置換表は「残り使用可能回数」を考慮できず誤った枝刈りを
+  // 起こす恐れがあるため無効化する（正確さを優先し、速度は多少犠牲にする）。
+  if(!ctx.hasUsageLimits){
+    const tkey = hashState(state) + HASH_CHARS[lastGrpIdx*8 + (lastSliceCol===null ? 6 : lastSliceCol)];
+    const prevVisit = ctx.visited.get(tkey);
+    if(prevVisit !== undefined){
+      const pcg = prevVisit >> 4, prg = prevVisit & 15;
+      if(pcg <= countedG && prg <= regrips) return; // 同等以上の条件で探索済み
+      ctx.visited.set(tkey, (Math.min(pcg,countedG)<<4) | Math.min(prg,regrips));
+    } else if(ctx.visited.size < TRANSPOSITION_CAP){
+      ctx.visited.set(tkey, (countedG<<4) | regrips);
+    }
   }
 
   ctx.nodeCounter++;
@@ -765,9 +860,14 @@ function idaDfsSync(ctx, state, rawG, countedG, threshold, path, lastGroup, last
   }
 
   const candidates = ctx.movesByLastGroup.get(lastGroup);
+  const lastWasX = lastGroup === 'x';
+  const groupLimit = ctx.groupLimit, groupUsage = ctx.groupUsage;
   for(let i=0; i<candidates.length; i++){
     const md = candidates[i];
+    if(lastWasX && md.rAxis) continue; // xの直後のR軸系は等価な別手順が存在するため正規形から除外
     if(md.sliceCol!==null && lastSliceCol!==null && Math.abs(md.sliceCol-lastSliceCol)===1) continue;
+    const lim = groupLimit[md.grpIdx];
+    if(lim >= 0 && groupUsage[md.grpIdx] >= lim) continue; // この回転記号の最大使用回数に到達
     let addRegrip=0;
     if(md.isX) addRegrip=1; else if(md.hand && lastHand && md.hand!==lastHand) addRegrip=1;
     const newRegrips = regrips+addRegrip;
@@ -775,7 +875,9 @@ function idaDfsSync(ctx, state, rawG, countedG, threshold, path, lastGroup, last
     const newHand = md.hand || lastHand;
     const ns = applyMoveFastInto(state, md.token, STATE_POOL[rawG]);
     path.push(md.token);
+    groupUsage[md.grpIdx]++;
     idaDfsSync(ctx, ns, rawG+1, md.isX ? countedG : countedG+1, threshold, path, md.grp, newHand, newRegrips, md.sliceCol, md.grpIdx);
+    groupUsage[md.grpIdx]--;
     path.pop();
     if(ctx.solutions.length >= ctx.maxSol*4) return;
   }
@@ -789,19 +891,24 @@ async function idaDfsTop(ctx, state, threshold){
   let idx = 0;
   for(const md of candidates){
     idx++;
+    const lim = ctx.groupLimit[md.grpIdx];
+    if(lim >= 0 && ctx.groupUsage[md.grpIdx] >= lim) continue;
     let addRegrip = md.isX ? 1 : 0;
     if(addRegrip>ctx.maxRegrip) continue;
     const newHand = md.hand || null;
     const ns = applyMoveFastInto(state, md.token, STATE_POOL[0]);
     path.push(md.token);
+    ctx.groupUsage[md.grpIdx]++;
     if(ctx.onProgress) ctx.onProgress({threshold, currentMove:md.token, moveIndex:idx, moveTotal:total, nodeCounter:ctx.nodeCounter, solutionsFound:ctx.solutions.length, minDepth:ctx.minDepth});
     try{
       idaDfsSync(ctx, ns, 1, md.isX ? 0 : 1, threshold, path, md.grp, newHand, addRegrip, md.sliceCol, md.grpIdx);
     } catch(e){
+      ctx.groupUsage[md.grpIdx]--;
       if(e===TIMEOUT_SIGNAL){ ctx.timedOut = true; return; }
       if(e===NODE_CAP_SIGNAL){ ctx.nodeCapReached = true; return; }
       throw e;
     }
+    ctx.groupUsage[md.grpIdx]--;
     path.pop();
     await yieldToUI();
     if(ctx.timedOut || ctx.nodeCapReached) return;
@@ -812,15 +919,29 @@ async function idaDfsTop(ctx, state, threshold){
 
 // 最小手数を自動的に見つけたうえで、そこから指定した追加手数まで深く探索する。
 // メモリはほぼ一定（再帰の深さ分のみ）なので、手数の上限を大きくしてもクラッシュしない。
-async function findMinDepthThenSearch(scrambled, maxRegrip, maxSol, extraDepth, timeBudgetMs, hardDepthCap, moves, onProgress, maxNodes){
+async function findMinDepthThenSearch(scrambled, maxRegrip, maxSol, extraDepth, timeBudgetMs, hardDepthCap, moves, onProgress, maxNodes, maxUsagePerFamily){
   const activeMoves = moves || BASE_MOVES;
   if(onProgress) onProgress({threshold:'-', currentMove:null, moveIndex:0, moveTotal:activeMoves.length, nodeCounter:0, solutionsFound:0, minDepth:null, phase:'meet'});
   const meet = await getMeetTable(activeMoves); // 合流テーブル(ゴール側からの逆展開)。初回のみ数十秒、以降はキャッシュ
   const deadline = Date.now() + timeBudgetMs; // 探索本体の時間予算はテーブル構築後から計測
+  const movesByLastGroup = buildMoveDescriptors(activeMoves);
+  // 回転記号(家族)ごとの最大使用回数。指定がなければ無制限(-1)。
+  const allDescriptors = movesByLastGroup.get(null);
+  const numGroups = Math.max(...allDescriptors.map(d=>d.grpIdx)) + 1;
+  const groupLimit = new Int32Array(numGroups).fill(-1);
+  if(maxUsagePerFamily){
+    for(const d of allDescriptors){
+      if(maxUsagePerFamily.has(d.grp)) groupLimit[d.grpIdx] = maxUsagePerFamily.get(d.grp);
+    }
+  }
+  const groupNameByIdx = new Array(numGroups);
+  for(const d of allDescriptors) groupNameByIdx[d.grpIdx] = d.grp;
   const ctx = {
     solutions: [], seen: new Set(), maxRegrip, maxSol, moves: activeMoves,
-    movesByLastGroup: buildMoveDescriptors(activeMoves), visited: new Map(),
+    movesByLastGroup, visited: new Map(),
     meet, meetTable: meet.table, meetFullDepth: meet.maxCountedDepth,
+    groupLimit, groupUsage: new Int32Array(numGroups), groupNameByIdx, maxUsagePerFamily: maxUsagePerFamily || null,
+    hasUsageLimits: groupLimit.some(v=>v>=0),
     deadline, nodeCounter: 0, maxNodes: maxNodes || DEFAULT_MAX_NODES,
     timedOut: false, nodeCapReached: false, nextThreshold: Infinity, onProgress, minDepth: null
   };
@@ -919,17 +1040,25 @@ loadSolved();
 // 回転記号（家族）ごとのチェックボックスを生成
 const FAMILY_LIST = ['U2','x','R','Rw','3Rw','4Rw','5Rw','Lw','3Lw','F','r','3r','m','l','3l'];
 function famId(group){ return 'fam_' + group.replace("'", 'p'); }
+function famMaxId(group){ return 'fammax_' + group.replace("'", 'p'); }
 (function buildFamilyGrid(){
   const grid = document.getElementById('familyGrid');
   for(const group of FAMILY_LIST){
-    const label = document.createElement('label');
-    label.className = 'famItem';
+    const item = document.createElement('div');
+    item.className = 'famItem';
     const cb = document.createElement('input');
     cb.type = 'checkbox'; cb.checked = true; cb.id = famId(group);
+    cb.style.cursor = 'pointer';
     const span = document.createElement('span');
     span.textContent = group;
-    label.appendChild(cb); label.appendChild(span);
-    grid.appendChild(label);
+    span.style.cursor = 'pointer';
+    span.addEventListener('click', ()=>{ cb.checked = !cb.checked; });
+    const maxInput = document.createElement('input');
+    maxInput.type = 'number'; maxInput.id = famMaxId(group);
+    maxInput.min = '0'; maxInput.placeholder = '無制限';
+    maxInput.title = group + ' の最大使用回数（空欄=無制限）';
+    item.appendChild(cb); item.appendChild(span); item.appendChild(maxInput);
+    grid.appendChild(item);
   }
 })();
 document.getElementById('btnFamAll').addEventListener('click', ()=>{
@@ -948,6 +1077,20 @@ function getActiveMoves(){
     if(grp==='F' && restrictF2 && (token==='F' || token==="F'")) return false;
     return true;
   });
+}
+
+// 各回転記号(家族)の最大使用回数を読み取る。空欄・0未満は無制限扱い。
+// 戻り値は Map<group, maxCount>（無制限のものは含まれない）。
+function getMaxUsagePerFamily(){
+  const map = new Map();
+  for(const g of FAMILY_LIST){
+    const el = document.getElementById(famMaxId(g));
+    const raw = el.value.trim();
+    if(raw === '') continue;
+    const n = parseInt(raw, 10);
+    if(!isNaN(n) && n >= 0) map.set(g, n);
+  }
+  return map;
 }
 
 function readNetToColors(){
@@ -1008,7 +1151,7 @@ document.getElementById('btnSearch').addEventListener('click', async ()=>{
   const maxRegrip = Math.max(0, parseInt(document.getElementById('maxRegrip').value,10)||4);
   const maxSol = Math.max(1, parseInt(document.getElementById('maxSol').value,10)||6);
   const timeBudgetMin = Math.max(1, Math.min(120, parseInt(document.getElementById('timeBudgetMin').value,10)||30));
-  const maxNodes = Math.max(1000000, Math.min(500000000, parseInt(document.getElementById('maxNodes').value,10)||60000000));
+  const maxNodes = Math.max(1000000, Math.min(1000000000, parseInt(document.getElementById('maxNodes').value,10)||10000000));
   const activeMoves = getActiveMoves();
   const HARD_DEPTH_CAP = 30;
 
@@ -1037,7 +1180,8 @@ document.getElementById('btnSearch').addEventListener('click', async ()=>{
 
     const t0=performance.now();
     const timeBudgetMs = timeBudgetMin * 60000;
-    const result = await findMinDepthThenSearch(initState, maxRegrip, maxSol, extraDepth, timeBudgetMs, HARD_DEPTH_CAP, activeMoves, showProgress, maxNodes);
+    const maxUsagePerFamily = getMaxUsagePerFamily();
+    const result = await findMinDepthThenSearch(initState, maxRegrip, maxSol, extraDepth, timeBudgetMs, HARD_DEPTH_CAP, activeMoves, showProgress, maxNodes, maxUsagePerFamily);
     const t1=performance.now();
 
     hideProgress();
